@@ -20,7 +20,7 @@ export default function TradeHistoryTable({ history = [], loading }) {
     <Paper sx={{ p: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Typography variant="h6" sx={{ fontWeight: 700 }}>Trade History</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>ประวัติการเทรด</Typography>
           <Chip label={`${history.length} trades`} size="small" sx={{ bgcolor: 'rgba(255,255,255,0.05)', color: 'text.secondary' }} />
         </Box>
         <Box sx={{ display: 'flex', gap: 2 }}>

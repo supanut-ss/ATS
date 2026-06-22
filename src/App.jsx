@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   ThemeProvider, createTheme, CssBaseline, Box,
   AppBar, Toolbar, Typography, IconButton, Drawer, List, ListItem,
-  ListItemButton, ListItemIcon, ListItemText, Divider, Badge, Chip,
+  ListItemButton, ListItemIcon, ListItemText, Badge, Chip,
   Grid, Button, Tooltip, CircularProgress,
 } from '@mui/material';
 import {
@@ -12,8 +12,11 @@ import {
   Settings as SettingsIcon,
   Menu as MenuIcon,
   Refresh as RefreshIcon,
-  WaterfallChart,
+  MonetizationOn,
   Webhook,
+  Toll,
+  Link as LinkIcon,
+  LinkOff,
 } from '@mui/icons-material';
 
 import AccountCard       from './components/AccountCard';
@@ -21,18 +24,16 @@ import PriceDisplay      from './components/PriceDisplay';
 import PositionsTable    from './components/PositionsTable';
 import TradeHistoryTable from './components/TradeHistoryTable';
 import ManualTradePanel  from './components/ManualTradePanel';
-import TradingViewChart  from './components/TradingViewChart';
 import WebhookGuide      from './components/WebhookGuide';
+import SignalsTracker    from './components/SignalsTracker';
+import QuickOverview     from './components/QuickOverview';
 
 import {
   getStatus, getAccount, getPrice,
   getPositions, getHistory, getRisk,
-  connectMT5, disconnectMT5,
+  connectMT5, disconnectMT5, getSignals,
 } from './services/api';
 
-// ──────────────────────────────────────────────
-// MUI Dark Theme
-// ──────────────────────────────────────────────
 const theme = createTheme({
   palette: {
     mode: 'dark',
@@ -73,40 +74,37 @@ const theme = createTheme({
 const DRAWER_WIDTH = 220;
 
 const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Dashboard',   icon: <DashboardIcon /> },
-  { id: 'chart',     label: 'Chart',       icon: <WaterfallChart /> },
-  { id: 'positions', label: 'Positions',   icon: <PositionsIcon /> },
-  { id: 'history',   label: 'History',     icon: <HistoryIcon /> },
-  { id: 'settings',  label: 'Setup Guide', icon: <Webhook /> },
+  { id: 'dashboard', label: 'ภาพรวม',     icon: <DashboardIcon />, desc: 'บัญชีและสถิติ' },
+  { id: 'trade',     label: 'เทรด',       icon: <PositionsIcon />, desc: 'เปิด/ปิดออเดอร์' },
+  { id: 'signals',   label: 'สัญญาณ',     icon: <Toll />,        desc: 'ผลลัพธ์สัญญาณ' },
+  { id: 'history',   label: 'ประวัติ',    icon: <HistoryIcon />, desc: 'ประวัติการเทรด' },
+  { id: 'settings',  label: 'คู่มือตั้งค่า', icon: <Webhook />, desc: 'Webhook & MT5' },
 ];
 
-// ──────────────────────────────────────────────
-// Main App
-// ──────────────────────────────────────────────
 export default function App() {
   const [page, setPage]             = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Data state
   const [status,    setStatus]    = useState(null);
   const [account,   setAccount]   = useState(null);
   const [price,     setPrice]     = useState(null);
   const [positions, setPositions] = useState([]);
   const [history,   setHistory]   = useState([]);
   const [risk,      setRisk]      = useState(null);
+  const [signals,   setSignals]   = useState([]);
 
   const [loading,   setLoading]   = useState(false);
   const [lastRefresh, setLastRefresh] = useState(null);
 
   const connected = status?.mt5_connected || false;
 
-  // ── Fetch all data ──
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, a, p, pos, h, r] = await Promise.all([
+      const [s, a, p, pos, h, r, sigs] = await Promise.all([
         getStatus(), getAccount(), getPrice(),
         getPositions(), getHistory(), getRisk(),
+        getSignals(),
       ]);
       if (s.ok)   setStatus(s.data);
       if (a.ok)   setAccount(a.data);
@@ -114,13 +112,13 @@ export default function App() {
       if (pos.ok) setPositions(Array.isArray(pos.data) ? pos.data : []);
       if (h.ok)   setHistory(Array.isArray(h.data) ? h.data : []);
       if (r.ok)   setRisk(r.data);
+      if (sigs.ok) setSignals(Array.isArray(sigs.data) ? sigs.data : []);
       setLastRefresh(new Date());
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Initial + polling every 5 seconds
   useEffect(() => {
     fetchAll();
     const id = setInterval(fetchAll, 5000);
@@ -139,7 +137,8 @@ export default function App() {
     setPositions([]);
   };
 
-  // ── Sidebar ──
+  const currentNav = NAV_ITEMS.find(n => n.id === page);
+
   const sidebarContent = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: '#0d1117' }}>
       <Toolbar sx={{ gap: 1.5, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
@@ -147,7 +146,7 @@ export default function App() {
           p: 0.7, borderRadius: 1.5,
           background: 'linear-gradient(135deg,#f59e0b,#d97706)',
         }}>
-          <WaterfallChart sx={{ fontSize: 20, color: '#fff' }} />
+          <MonetizationOn sx={{ fontSize: 20, color: '#fff' }} />
         </Box>
         <Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1, background: 'linear-gradient(90deg,#fbbf24,#f59e0b)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
@@ -165,6 +164,7 @@ export default function App() {
               onClick={() => { setPage(item.id); setMobileOpen(false); }}
               sx={{
                 borderRadius: 2,
+                py: 1.2,
                 '&.Mui-selected': {
                   bgcolor: 'rgba(99,102,241,0.12)',
                   borderLeft: '3px solid #6366f1',
@@ -175,7 +175,7 @@ export default function App() {
               }}
             >
               <ListItemIcon sx={{ minWidth: 36, color: 'text.secondary' }}>
-                {item.id === 'positions'
+                {item.id === 'trade'
                   ? <Badge badgeContent={positions.length || null} color="primary" max={9}>
                       {item.icon}
                     </Badge>
@@ -183,19 +183,19 @@ export default function App() {
               </ListItemIcon>
               <ListItemText
                 primary={item.label}
+                secondary={item.desc}
                 primaryTypographyProps={{ variant: 'body2', fontWeight: 500 }}
+                secondaryTypographyProps={{ variant: 'caption', sx: { fontSize: '0.65rem', lineHeight: 1.2 } }}
               />
             </ListItemButton>
           </ListItem>
         ))}
       </List>
 
-      {/* Connection status */}
-      <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+      <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Chip
-          label={connected ? '● MT5 Connected' : '○ MT5 Disconnected'}
+          label={connected ? '● MT5 เชื่อมต่อแล้ว' : '○ MT5 ยังไม่เชื่อมต่อ'}
           size="small"
-          fullWidth
           sx={{
             width: '100%',
             bgcolor: connected ? 'rgba(16,185,129,0.08)' : 'rgba(244,63,94,0.08)',
@@ -203,16 +203,48 @@ export default function App() {
             fontWeight: 700, borderRadius: 1.5,
           }}
         />
+        {!connected ? (
+          <Button
+            variant="contained"
+            size="small"
+            fullWidth
+            startIcon={<LinkIcon />}
+            onClick={handleConnect}
+            sx={{ background: 'linear-gradient(135deg,#6366f1,#4f46e5)' }}
+          >
+            เชื่อมต่อ MT5
+          </Button>
+        ) : (
+          <Button
+            variant="outlined"
+            size="small"
+            fullWidth
+            startIcon={<LinkOff />}
+            onClick={handleDisconnect}
+            sx={{ borderColor: 'rgba(244,63,94,0.3)', color: '#f43f5e' }}
+          >
+            ตัดการเชื่อมต่อ
+          </Button>
+        )}
       </Box>
     </Box>
   );
 
-  // ── Page Content ──
   const renderPage = () => {
     switch (page) {
       case 'dashboard':
         return (
           <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <QuickOverview
+                connected={connected}
+                account={account}
+                price={price}
+                positions={positions}
+                risk={risk}
+                loading={loading}
+              />
+            </Grid>
             <Grid item xs={12}>
               <AccountCard
                 account={account}
@@ -221,6 +253,15 @@ export default function App() {
                 onDisconnect={handleDisconnect}
               />
             </Grid>
+            <Grid item xs={12}>
+              <PriceDisplay price={price} loading={!price && loading} compact />
+            </Grid>
+          </Grid>
+        );
+
+      case 'trade':
+        return (
+          <Grid container spacing={3}>
             <Grid item xs={12}>
               <PriceDisplay price={price} loading={!price && loading} />
             </Grid>
@@ -233,38 +274,14 @@ export default function App() {
           </Grid>
         );
 
-      case 'chart':
-        return (
-          <Grid container spacing={3}>
-            <Grid item xs={12}>
-              <PriceDisplay price={price} loading={!price && loading} />
-            </Grid>
-            <Grid item xs={12}>
-              <TradingViewChart />
-            </Grid>
-          </Grid>
-        );
-
-      case 'positions':
-        return (
-          <Grid container spacing={3}>
-            <Grid item xs={12}>
-              <PriceDisplay price={price} loading={!price && loading} />
-            </Grid>
-            <Grid item xs={12} md={8}>
-              <PositionsTable positions={positions} loading={false} onRefresh={fetchAll} />
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <ManualTradePanel price={price} risk={risk} onRefresh={fetchAll} />
-            </Grid>
-          </Grid>
-        );
+      case 'signals':
+        return <SignalsTracker signals={signals} loading={loading} onRefresh={fetchAll} />;
 
       case 'history':
         return <TradeHistoryTable history={history} loading={false} />;
 
       case 'settings':
-        return <WebhookGuide serverStatus={connected} />;
+        return <WebhookGuide serverStatus={connected} onRefresh={fetchAll} />;
 
       default:
         return null;
@@ -275,7 +292,6 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
 
-      {/* Global pulse animation */}
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; transform: scale(1); }
@@ -284,7 +300,6 @@ export default function App() {
       `}</style>
 
       <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
-        {/* AppBar */}
         <AppBar
           position="fixed"
           sx={{
@@ -300,18 +315,24 @@ export default function App() {
             <IconButton sx={{ display: { md: 'none' } }} onClick={() => setMobileOpen(true)}>
               <MenuIcon />
             </IconButton>
-            <Typography variant="h6" sx={{ fontWeight: 700, flexGrow: 1 }}>
-              {NAV_ITEMS.find(n => n.id === page)?.label}
-            </Typography>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                {currentNav?.label}
+              </Typography>
+              {currentNav?.desc && (
+                <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
+                  {currentNav.desc}
+                </Typography>
+              )}
+            </Box>
 
-            {/* Last refresh time */}
             {lastRefresh && (
               <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
-                Updated {lastRefresh.toLocaleTimeString('th-TH')}
+                อัปเดต {lastRefresh.toLocaleTimeString('th-TH')}
               </Typography>
             )}
 
-            <Tooltip title="Refresh Now">
+            <Tooltip title="รีเฟรชข้อมูล">
               <IconButton onClick={fetchAll} disabled={loading} size="small">
                 {loading
                   ? <CircularProgress size={18} sx={{ color: 'text.secondary' }} />
@@ -320,7 +341,6 @@ export default function App() {
               </IconButton>
             </Tooltip>
 
-            {/* Float P/L in AppBar */}
             {account && (
               <Chip
                 label={`${account.profit >= 0 ? '+' : ''}$${Number(account.profit).toFixed(2)}`}
@@ -335,7 +355,6 @@ export default function App() {
           </Toolbar>
         </AppBar>
 
-        {/* Sidebar — mobile */}
         <Drawer
           variant="temporary"
           open={mobileOpen}
@@ -346,7 +365,6 @@ export default function App() {
           {sidebarContent}
         </Drawer>
 
-        {/* Sidebar — desktop */}
         <Drawer
           variant="permanent"
           sx={{
@@ -358,7 +376,6 @@ export default function App() {
           {sidebarContent}
         </Drawer>
 
-        {/* Main Content */}
         <Box
           component="main"
           sx={{
@@ -366,6 +383,7 @@ export default function App() {
             p: { xs: 2, sm: 3 },
             pt: { xs: 9, sm: 10 },
             width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
+            ml: { md: `${DRAWER_WIDTH}px` },
             minHeight: '100vh',
           }}
         >

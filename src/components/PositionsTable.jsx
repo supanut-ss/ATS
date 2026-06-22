@@ -43,7 +43,7 @@ export default function PositionsTable({ positions = [], loading, onRefresh }) {
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Typography variant="h6" sx={{ fontWeight: 700 }}>Open Positions</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>ออเดอร์ที่เปิดอยู่</Typography>
           <Chip
             label={positions.length}
             size="small"

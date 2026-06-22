@@ -50,9 +50,9 @@ export default function ManualTradePanel({ price, risk, onRefresh }) {
 
   return (
     <Paper sx={{ p: 3 }}>
-      <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>Manual Trade</Typography>
+      <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>เทรดด้วยตนเอง</Typography>
       <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
-        Fixed lot: <strong>0.05</strong> · XAUUSD
+        Lot คงที่: <strong>0.05</strong> · XAUUSD
       </Typography>
 
       {/* Risk Status */}

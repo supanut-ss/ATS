@@ -1,9 +1,9 @@
-//@version=5
+//@version=6
 strategy(
     title        = "XAUUSD — Liquidity Sweep & Volume Confirmation",
     shorttitle   = "LS+Vol Bot",
     overlay      = true,
-    calc_on_every_tick = false,
+    calc_on_every_tick = true,
     default_qty_type   = strategy.fixed,
     default_qty_value  = 0.05,
     commission_type    = strategy.commission.cash_per_contract,
@@ -14,31 +14,45 @@ strategy(
 // ══════════════════════════════════════════════════════════
 // INPUTS
 // ══════════════════════════════════════════════════════════
-grp_tf       = "⏱ Timeframes"
-grp_liq      = "💧 Liquidity"
-grp_vol      = "📊 Volume"
-grp_sl       = "🛡 Risk / SL / TP"
-grp_wh       = "🔗 Webhook"
+grp_liq = "💧 Liquidity"
+grp_vol = "📊 Volume"
+grp_sl  = "🛡 Risk / SL / TP"
+grp_wh  = "🔗 Webhook (Signal Test Mode)"
 
-// Liquidity Pool Settings
 eqh_lookback = input.int(20, "EQH/EQL Lookback (bars)",          group=grp_liq, minval=5)
 eq_tolerance = input.float(0.5, "EQ Tolerance (USD)",             group=grp_liq, minval=0.1, step=0.1)
 show_liq     = input.bool(true, "Show Liquidity Zones",           group=grp_liq)
+mss_lookback = input.int(5, "MSS Structure Lookback",             group=grp_liq)
 
-// Volume Settings
 vol_ma_len   = input.int(20, "Volume MA Length",                  group=grp_vol)
 vol_mult     = input.float(1.5, "Volume Spike Multiplier (×MA)",  group=grp_vol, minval=1.0, step=0.1)
 
-// MSS / ChoCh Settings
-mss_lookback = input.int(5, "MSS Structure Lookback",             group=grp_liq)
-
-// SL / TP
 sl_buffer    = input.float(2.0, "SL Buffer above/below Sweep (USD)", group=grp_sl, minval=0.1)
 tp_rr        = input.float(2.0, "Take Profit R:R Ratio",          group=grp_sl, minval=0.5, step=0.5)
+min_sl_usd   = input.float(3.0, "Min SL Distance (USD)",            group=grp_sl, minval=0.5, step=0.5)
 
-// Webhook Token (must match your .env WEBHOOK_SECRET)
-webhook_token = input.string("your_secret_token_here", "Webhook Auth Token", group=grp_wh)
-webhook_url   = input.string("http://localhost:5000/webhook", "Webhook URL",  group=grp_wh)
+signal_cooldown = input.int(3, "Signal Cooldown (bars)",          group=grp_wh, minval=1, tooltip="กันยิงสัญญาณซ้ำในช่วงสั้นๆ")
+
+// Token ต้องตรงกับ backend/appsettings.json → WebhookSettings:Secret
+webhook_token = input.string("ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f", "Webhook Auth Token", group=grp_wh, tooltip="ตั้ง Webhook URL ใน TradingView Alert (script ตั้ง URL ไม่ได้)")
+
+// เปลี่ยนเลข (0→1→2…) เพื่อยิงทดสอบ — ต้องสร้าง Alert + Webhook URL ใน TradingView ก่อน!
+test_buy_n  = input.int(0, "🔬 Test BUY — เปลี่ยนเลขเพื่อยิง",  minval=0, group=grp_wh, tooltip="สร้าง Alert: LS+Vol Bot → alert() function calls only + ใส่ Webhook URL")
+test_sell_n = input.int(0, "🔬 Test SELL — เปลี่ยนเลขเพื่อยิง", minval=0, group=grp_wh)
+test_win_n  = input.int(0, "🔬 Test WIN — เปลี่ยนเลขเพื่อยิง",  minval=0, group=grp_wh)
+test_loss_n = input.int(0, "🔬 Test LOSS — เปลี่ยนเลขเพื่อยิง", minval=0, group=grp_wh)
+
+// ══════════════════════════════════════════════════════════
+// WEBHOOK PAYLOAD BUILDER
+// ══════════════════════════════════════════════════════════
+f_num(v) =>
+    str.tostring(math.round(v, 2))
+
+f_open_payload(action, entry, sl, tp, comment, signal_id) =>
+    '{"token":"' + webhook_token + '","action":"' + action + '","symbol":"XAUUSD","signal_id":"' + signal_id + '","entry_price":' + f_num(entry) + ',"sl":' + f_num(sl) + ',"tp":' + f_num(tp) + ',"rr":' + str.tostring(tp_rr) + ',"timeframe":"' + timeframe.period + '","bar_time":' + str.tostring(time) + ',"comment":"' + comment + '"}'
+
+f_close_payload(signal_id, entry, exit_p, profit, result) =>
+    '{"token":"' + webhook_token + '","action":"CLOSE_SIGNAL","symbol":"XAUUSD","signal_id":"' + signal_id + '","entry_price":' + f_num(entry) + ',"exit_price":' + f_num(exit_p) + ',"profit":' + str.tostring(profit) + ',"result":"' + result + '","timeframe":"' + timeframe.period + '","bar_time":' + str.tostring(time) + '}'
 
 // ══════════════════════════════════════════════════════════
 // VOLUME ANALYSIS
@@ -52,7 +66,6 @@ vol_spike = volume > vol_ma * vol_mult
 ph = ta.pivothigh(high, eqh_lookback, eqh_lookback)
 pl = ta.pivotlow(low,  eqh_lookback, eqh_lookback)
 
-// Store recent pivot high and low for EQH/EQL detection
 var float last_ph = na
 var float last_pl = na
 var int   last_ph_bar = na
@@ -60,7 +73,6 @@ var int   last_pl_bar = na
 
 if not na(ph)
     if not na(last_ph) and math.abs(ph - last_ph) <= eq_tolerance
-        // Equal Highs detected — mark as EQH liquidity
         if show_liq
             line.new(last_ph_bar, last_ph, bar_index - eqh_lookback, ph, color=color.new(color.red, 40), width=1, style=line.style_dashed)
     last_ph     := ph
@@ -68,7 +80,6 @@ if not na(ph)
 
 if not na(pl)
     if not na(last_pl) and math.abs(pl - last_pl) <= eq_tolerance
-        // Equal Lows detected — mark as EQL liquidity
         if show_liq
             line.new(last_pl_bar, last_pl, bar_index - eqh_lookback, pl, color=color.new(color.lime, 40), width=1, style=line.style_dashed)
     last_pl     := pl
@@ -77,63 +88,43 @@ if not na(pl)
 // ══════════════════════════════════════════════════════════
 // LIQUIDITY SWEEP DETECTION
 // ══════════════════════════════════════════════════════════
-// Sweep High: wick pierces above recent high but closes below it (bearish sweep)
-// Sweep Low:  wick pierces below recent low but closes above it (bullish sweep)
 recent_high = ta.highest(high, eqh_lookback)
 recent_low  = ta.lowest(low,   eqh_lookback)
 
-swept_high = high > recent_high[1] and close < recent_high[1]  // stop hunt above highs
-swept_low  = low  < recent_low[1]  and close > recent_low[1]   // stop hunt below lows
+swept_high = high > recent_high[1] and close < recent_high[1]
+swept_low  = low  < recent_low[1]  and close > recent_low[1]
 
-plotshape(swept_high, "Sweep High", shape.triangledown, location.abovebar, color.new(color.red,  20), size=size.small)
-plotshape(swept_low,  "Sweep Low",  shape.triangleup,   location.belowbar, color.new(color.lime, 20), size=size.small)
+plotshape(swept_high, "Sweep High", shape.triangledown, location.abovebar, color=color.new(color.red,  20), size=size.small)
+plotshape(swept_low,  "Sweep Low",  shape.triangleup,   location.belowbar, color=color.new(color.lime, 20), size=size.small)
 
 // ══════════════════════════════════════════════════════════
 // MARKET STRUCTURE SHIFT (MSS / ChoCh)
+// Sweep ต้องเกิดแท่งก่อนหน้า + MSS + Volume บนแท่งปัจจุบัน
 // ══════════════════════════════════════════════════════════
-// After bullish sweep: MSS = price breaks above the last swing high (ChoCh bullish)
-// After bearish sweep: MSS = price breaks below the last swing low (ChoCh bearish)
-
 swing_hi = ta.highest(high, mss_lookback)
 swing_lo = ta.lowest(low,   mss_lookback)
 
-// MSS Bullish: broke above swing high after a sweep low
 mss_bull = close > swing_hi[1] and swept_low[1]
-// MSS Bearish: broke below swing low after a sweep high
 mss_bear = close < swing_lo[1] and swept_high[1]
 
-plotshape(mss_bull, "MSS Bull", shape.labelup,   location.belowbar, color.new(color.teal,   10), text="MSS↑", textcolor=color.white, size=size.tiny)
-plotshape(mss_bear, "MSS Bear", shape.labeldown, location.abovebar, color.new(color.orange, 10), text="MSS↓", textcolor=color.white, size=size.tiny)
+plotshape(mss_bull, "MSS Bull", shape.labelup,   location.belowbar, color=color.new(color.teal,   10), text="MSS↑", textcolor=color.white, size=size.tiny)
+plotshape(mss_bear, "MSS Bear", shape.labeldown, location.abovebar, color=color.new(color.orange, 10), text="MSS↓", textcolor=color.white, size=size.tiny)
 
 // ══════════════════════════════════════════════════════════
-// FAIR VALUE GAP (FVG) Detection
+// FAIR VALUE GAP (FVG) — แสดงผลเท่านั้น
 // ══════════════════════════════════════════════════════════
-// Bullish FVG: gap between candle[2] high and candle[0] low
-// Bearish FVG: gap between candle[2] low and candle[0] high
-fvg_bull_top    = high[2]
-fvg_bull_bot    = low[0]
-fvg_bull_exists = fvg_bull_bot > fvg_bull_top
-
-fvg_bear_top    = high[0]
-fvg_bear_bot    = low[2]
-fvg_bear_exists = fvg_bear_bot > fvg_bear_top
+fvg_bull_exists = low[0] > high[2]
+fvg_bear_exists = low[2] > high[0]
 
 bgcolor(fvg_bull_exists and show_liq ? color.new(color.teal,  90) : na, title="Bullish FVG")
 bgcolor(fvg_bear_exists and show_liq ? color.new(color.orange,90) : na, title="Bearish FVG")
 
 // ══════════════════════════════════════════════════════════
-// ENTRY SIGNALS (Full Confluence Required)
-// Checklist:
-//   ✓ Sweep of EQH/EQL
-//   ✓ MSS / ChoCh in opposite direction
-//   ✓ Volume confirmation (spike on MSS candle)
+// ENTRY SIGNALS
 // ══════════════════════════════════════════════════════════
-long_signal  = swept_low[1]  and mss_bull and vol_spike
-short_signal = swept_high[1] and mss_bear and vol_spike
+long_raw  = mss_bull and vol_spike
+short_raw = mss_bear and vol_spike
 
-// ══════════════════════════════════════════════════════════
-// STOP LOSS & TAKE PROFIT CALCULATION
-// ══════════════════════════════════════════════════════════
 long_sl  = ta.lowest(low, 3) - sl_buffer
 short_sl = ta.highest(high, 3) + sl_buffer
 
@@ -143,8 +134,23 @@ short_sl_dist = short_sl - close
 long_tp  = close + long_sl_dist  * tp_rr
 short_tp = close - short_sl_dist * tp_rr
 
+long_valid  = long_raw  and long_sl_dist  >= min_sl_usd and long_sl  < close and long_tp  > close
+short_valid = short_raw and short_sl_dist >= min_sl_usd and short_sl > close and short_tp < close
+
+var int last_long_bar  = na
+var int last_short_bar = na
+
+long_cooldown_ok  = na(last_long_bar)  or bar_index - last_long_bar  >= signal_cooldown
+short_cooldown_ok = na(last_short_bar) or bar_index - last_short_bar >= signal_cooldown
+
+long_signal  = long_valid  and long_cooldown_ok
+short_signal = short_valid and short_cooldown_ok
+
+// เก็บ signal_id ล่าสุดสำหรับ CLOSE_SIGNAL
+var string last_open_signal_id = na
+
 // ══════════════════════════════════════════════════════════
-// STRATEGY ENTRIES (for backtesting)
+// STRATEGY ENTRIES (จำลอง SL/TP เพื่อทดสอบ CLOSE_SIGNAL)
 // ══════════════════════════════════════════════════════════
 if long_signal
     strategy.entry("Long", strategy.long)
@@ -155,52 +161,98 @@ if short_signal
     strategy.exit("Short Exit", "Short", stop=short_sl, limit=short_tp)
 
 // ══════════════════════════════════════════════════════════
-// ALERTS (Webhook → Python Bot → MT5)
+// ALERTS → .NET Backend (บันทึกสัญญาณ ไม่เปิด MT5)
 // ══════════════════════════════════════════════════════════
-// BUY Alert
 if long_signal
-    alert(
-        '{"token":"' + webhook_token + '","action":"BUY","symbol":"XAUUSD",' +
-        '"sl":' + str.tostring(math.round(long_sl, 2)) + ',' +
-        '"tp":' + str.tostring(math.round(long_tp, 2)) + ',' +
-        '"comment":"Sweep+MSS+Vol BUY"}',
-        alert.freq_once_per_bar_close
-    )
+    last_long_bar := bar_index
+    sid = str.tostring(time) + "_BUY"
+    last_open_signal_id := sid
+    alert(f_open_payload("BUY", close, long_sl, long_tp, "Sweep+MSS+Vol BUY", sid), alert.freq_once_per_bar_close)
 
-// SELL Alert
 if short_signal
-    alert(
-        '{"token":"' + webhook_token + '","action":"SELL","symbol":"XAUUSD",' +
-        '"sl":' + str.tostring(math.round(short_sl, 2)) + ',' +
-        '"tp":' + str.tostring(math.round(short_tp, 2)) + ',' +
-        '"comment":"Sweep+MSS+Vol SELL"}',
-        alert.freq_once_per_bar_close
-    )
+    last_short_bar := bar_index
+    sid = str.tostring(time) + "_SELL"
+    last_open_signal_id := sid
+    alert(f_open_payload("SELL", close, short_sl, short_tp, "Sweep+MSS+Vol SELL", sid), alert.freq_once_per_bar_close)
+
+if strategy.closedtrades > strategy.closedtrades[1]
+    last_idx = strategy.closedtrades - 1
+    trade_profit = strategy.closedtrades.profit(last_idx)
+    outcome = trade_profit > 0 ? "WIN" : "LOSS"
+    ent_price = strategy.closedtrades.entry_price(last_idx)
+    ext_price = strategy.closedtrades.exit_price(last_idx)
+    close_id = na(last_open_signal_id) ? str.tostring(time) + "_CLOSE" : last_open_signal_id
+    alert(f_close_payload(close_id, ent_price, ext_price, trade_profit, outcome), alert.freq_once_per_bar_close)
 
 // ══════════════════════════════════════════════════════════
-// VISUAL: Entry Markers
+// VISUAL
 // ══════════════════════════════════════════════════════════
 plotshape(long_signal,  "BUY Signal",  shape.arrowup,   location.belowbar, color.new(color.green, 0), size=size.normal)
 plotshape(short_signal, "SELL Signal", shape.arrowdown, location.abovebar, color.new(color.red,   0), size=size.normal)
 
-// Volume bars coloring
-barcolor(vol_spike and long_signal  ? color.new(color.green, 30) :
-         vol_spike and short_signal ? color.new(color.red,   30) : na)
+barcolor(vol_spike and long_signal ? color.new(color.green, 30) : vol_spike and short_signal ? color.new(color.red, 30) : na)
 
 // ══════════════════════════════════════════════════════════
-// INFO TABLE (Top-Right)
+// INFO TABLE
 // ══════════════════════════════════════════════════════════
-var table info_tbl = table.new(position.top_right, 2, 6, border_width=1)
+var table info_tbl = table.new(position.top_right, 2, 9, border_width=1)
 if barstate.islast
-    table.cell(info_tbl, 0, 0, "XAUUSD Bot",    text_color=color.white,  bgcolor=color.new(color.blue, 20),  text_size=size.small, text_halign=text.align_center)
-    table.cell(info_tbl, 1, 0, "Liquidity Sweep",text_color=color.white, bgcolor=color.new(color.blue, 20),  text_size=size.small, text_halign=text.align_center)
-    table.cell(info_tbl, 0, 1, "Vol MA",         text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 1, str.tostring(math.round(vol_ma, 0)), text_color=color.white, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 2, "Vol Spike",      text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 2, vol_spike ? "YES ✓" : "no", text_color=vol_spike ? color.lime : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 3, "Swept High",     text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 3, swept_high ? "YES ✓" : "no", text_color=swept_high ? color.red : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 4, "Swept Low",      text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 4, swept_low ? "YES ✓" : "no", text_color=swept_low ? color.lime : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 5, "SL Buffer",      text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 5, str.tostring(sl_buffer) + " USD", text_color=color.white, bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 0, 0, "LS+Vol Bot",     text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(info_tbl, 1, 0, "Signal Test",    text_color=color.lime,  bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(info_tbl, 0, 1, "Alert",          text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 1, 1, buy_test_fire ? "ยิงแล้ว!" : "สร้าง Alert ก่อน", text_color=buy_test_fire ? color.lime : color.yellow, bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 0, 2, "Mode",           text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 1, 2, "Webhook Only",   text_color=color.aqua,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 0, 3, "TF",             text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 1, 3, timeframe.period, text_color=color.white, bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 0, 4, "Vol Spike",      text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 1, 4, vol_spike ? "YES" : "no", text_color=vol_spike ? color.lime : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 0, 5, "MSS Bull",       text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 1, 5, mss_bull ? "YES" : "no", text_color=mss_bull ? color.lime : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 0, 6, "MSS Bear",       text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 1, 6, mss_bear ? "YES" : "no", text_color=mss_bear ? color.red : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 0, 7, "Valid BUY",      text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 1, 7, long_valid ? "READY" : "—", text_color=long_valid ? color.lime : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 0, 8, "Valid SELL",     text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
+    table.cell(info_tbl, 1, 8, short_valid ? "READY" : "—", text_color=short_valid ? color.red : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
+
+// ══════════════════════════════════════════════════════════
+// MANUAL WEBHOOK TEST
+// สร้าง Alert แบบใดแบบหนึ่ง:
+//   A) Condition = "🔬 Test BUY Webhook" (แนะนำ — ง่ายกว่า)
+//   B) Condition = "alert() function calls only"
+// แล้วใส่ Webhook URL + เปลี่ยนเลข 0→1
+// ══════════════════════════════════════════════════════════
+buy_test_fire  = test_buy_n  > 0 and ta.change(test_buy_n)  != 0
+sell_test_fire = test_sell_n > 0 and ta.change(test_sell_n) != 0
+win_test_fire  = test_win_n  > 0 and ta.change(test_win_n)  != 0
+loss_test_fire = test_loss_n > 0 and ta.change(test_loss_n) != 0
+
+// alertcondition ใช้ const string + placeholder {{close}}
+// alert() ใช้ JSON เต็ม — สร้าง Alert แบบ "alert() function calls only"
+alertcondition(buy_test_fire,  title="🔬 Test BUY Webhook",  message='{"token":"ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f","action":"BUY","symbol":"XAUUSD","signal_id":"tv_test_buy","entry_price":{{close}},"sl":0,"tp":0,"timeframe":"{{interval}}","comment":"Manual Test BUY"}')
+alertcondition(sell_test_fire, title="🔬 Test SELL Webhook", message='{"token":"ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f","action":"SELL","symbol":"XAUUSD","signal_id":"tv_test_sell","entry_price":{{close}},"sl":0,"tp":0,"timeframe":"{{interval}}","comment":"Manual Test SELL"}')
+alertcondition(win_test_fire,  title="🔬 Test WIN Webhook",  message='{"token":"ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f","action":"CLOSE_SIGNAL","symbol":"XAUUSD","signal_id":"tv_test","entry_price":{{close}},"exit_price":{{close}},"profit":200,"result":"WIN","timeframe":"{{interval}}"}')
+alertcondition(loss_test_fire, title="🔬 Test LOSS Webhook", message='{"token":"ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f","action":"CLOSE_SIGNAL","symbol":"XAUUSD","signal_id":"tv_test","entry_price":{{close}},"exit_price":{{close}},"profit":-100,"result":"LOSS","timeframe":"{{interval}}"}')
+
+buy_test_msg  = f_open_payload("BUY", close, close - 10, close + 20, "Manual Test BUY", str.tostring(time) + "_TEST_BUY")
+sell_test_msg = f_open_payload("SELL", close, close + 10, close - 20, "Manual Test SELL", str.tostring(time) + "_TEST_SELL")
+win_test_msg  = f_close_payload(na(last_open_signal_id) ? str.tostring(time) + "_TEST" : last_open_signal_id, close - 20, close, 200.0, "WIN")
+loss_test_msg = f_close_payload(na(last_open_signal_id) ? str.tostring(time) + "_TEST" : last_open_signal_id, close + 10, close, -100.0, "LOSS")
+
+if buy_test_fire
+    last_open_signal_id := str.tostring(time) + "_TEST_BUY"
+    alert(buy_test_msg, alert.freq_once_per_bar)
+
+if sell_test_fire
+    last_open_signal_id := str.tostring(time) + "_TEST_SELL"
+    alert(sell_test_msg, alert.freq_once_per_bar)
+
+if win_test_fire
+    alert(win_test_msg, alert.freq_once_per_bar)
+
+if loss_test_fire
+    alert(loss_test_msg, alert.freq_once_per_bar)
+
+plotshape(buy_test_fire,  "Test BUY Sent",  shape.labelup,   location.belowbar, color=color.lime,  text="BUY→",  textcolor=color.white, size=size.tiny)
+plotshape(sell_test_fire, "Test SELL Sent", shape.labeldown, location.abovebar, color=color.red,   text="SELL→", textcolor=color.white, size=size.tiny)

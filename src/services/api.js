@@ -3,7 +3,10 @@
  * Communicates with the Python Flask server running on localhost:5000
  */
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+export const BASE_URL = import.meta.env.VITE_API_URL ||
+  (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? "http://localhost:5000"
+    : "");
 
 async function apiCall(path, options = {}) {
   try {
@@ -54,3 +57,43 @@ export const modifyPosition = (ticket, sl, tp) =>
     method: "POST",
     body: JSON.stringify({ sl, tp }),
   });
+
+// ──────────────────────────────────────────────
+// Signal performance tracking (for .NET Backend)
+// ──────────────────────────────────────────────
+export const getSignals    = () => apiCall("/api/signals");
+export const clearSignals  = () => apiCall("/api/signals/clear", { method: "POST" });
+export const getWebhookLog = () => apiCall("/api/webhook/log");
+
+export const sendTestWebhook = (action = "BUY") => {
+  const id = `dashboard_test_${Date.now()}`;
+  const price = 2650.0;
+  const payload = action === "BUY" || action === "SELL"
+    ? {
+        token: "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f",
+        action,
+        symbol: "XAUUSD",
+        signal_id: id,
+        entry_price: price,
+        sl: action === "BUY" ? price - 10 : price + 10,
+        tp: action === "BUY" ? price + 20 : price - 20,
+        rr: 2,
+        timeframe: "5",
+        bar_time: Date.now(),
+        comment: `Dashboard Test ${action}`,
+      }
+    : {
+        token: "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f",
+        action: "CLOSE_SIGNAL",
+        symbol: "XAUUSD",
+        signal_id: id,
+        entry_price: price - 10,
+        exit_price: price,
+        profit: action === "WIN" ? 200 : -100,
+        result: action,
+        timeframe: "5",
+        bar_time: Date.now(),
+      };
+  return apiCall("/webhook", { method: "POST", body: JSON.stringify(payload) });
+};
+
