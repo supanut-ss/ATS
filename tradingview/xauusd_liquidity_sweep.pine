@@ -1,258 +1,381 @@
 //@version=6
 strategy(
-    title        = "XAUUSD — Liquidity Sweep & Volume Confirmation",
-    shorttitle   = "LS+Vol Bot",
-    overlay      = true,
-    calc_on_every_tick = true,
-    default_qty_type   = strategy.fixed,
-    default_qty_value  = 0.05,
-    commission_type    = strategy.commission.cash_per_contract,
-    commission_value   = 0.35,
-    slippage           = 3
+    title               = "XAUUSD M5 — Sweep+MSS High WinRate v3",
+    shorttitle          = "Gold LS v3",
+    overlay             = true,
+    calc_on_every_tick  = false,
+    calc_on_order_fills = true,
+    pyramiding          = 0,
+    default_qty_type    = strategy.fixed,
+    default_qty_value   = 1.0,
+    commission_type     = strategy.commission.cash_per_contract,
+    commission_value    = 0.035,
+    slippage            = 3,
+    initial_capital     = 1000000
 )
 
 // ══════════════════════════════════════════════════════════
-// INPUTS
+// INPUTS — เหลือเฉพาะตัวที่มีผลต่อ win rate จริงๆ
 // ══════════════════════════════════════════════════════════
-grp_liq = "💧 Liquidity"
-grp_vol = "📊 Volume"
-grp_sl  = "🛡 Risk / SL / TP"
-grp_wh  = "🔗 Webhook (Signal Test Mode)"
+grp_sw  = "💧 Sweep"
+grp_mss = "🔀 MSS"
+grp_cf  = "✅ Confirmation"
+grp_sl  = "🛡 SL / TP"
+grp_wh  = "🔗 Webhook"
 
-eqh_lookback = input.int(20, "EQH/EQL Lookback (bars)",          group=grp_liq, minval=5)
-eq_tolerance = input.float(0.5, "EQ Tolerance (USD)",             group=grp_liq, minval=0.1, step=0.1)
-show_liq     = input.bool(true, "Show Liquidity Zones",           group=grp_liq)
-mss_lookback = input.int(5, "MSS Structure Lookback",             group=grp_liq)
+// ── Sweep ──
+sweep_lookback = input.int(12, "Swing Lookback (bars)", group=grp_sw, minval=5, maxval=50)
+min_sweep_ext  = input.float(0.3, "Min Sweep Extension (USD)", group=grp_sw, minval=0.0, step=0.1, tooltip="wick ต้องทะลุ swing เกิน X USD — กรอง false sweep")
+show_sweep     = input.bool(true, "Show Sweep Markers",           group=grp_sw)
 
-vol_ma_len   = input.int(20, "Volume MA Length",                  group=grp_vol)
-vol_mult     = input.float(1.5, "Volume Spike Multiplier (×MA)",  group=grp_vol, minval=1.0, step=0.1)
+// ── MSS ──
+mss_left  = input.int(5, "MSS Pivot Left",  group=grp_mss, minval=3, maxval=10)
+mss_right = input.int(2, "MSS Pivot Right", group=grp_mss, minval=1, maxval=5)
+sw_window = input.int(20, "Sweep→MSS Window (bars)", group=grp_mss, minval=5, maxval=40)
 
-sl_buffer    = input.float(2.0, "SL Buffer above/below Sweep (USD)", group=grp_sl, minval=0.1)
-tp_rr        = input.float(2.0, "Take Profit R:R Ratio",          group=grp_sl, minval=0.5, step=0.5)
-min_sl_usd   = input.float(3.0, "Min SL Distance (USD)",            group=grp_sl, minval=0.5, step=0.5)
+// ── Confirmation (Win Rate filters) ──
+// Toggles
+use_h4_trend   = input.bool(false, "Use H4 Trend Filter", group=grp_cf)
+use_h1_trend   = input.bool(true, "Use H1 Trend Filter", group=grp_cf)
+use_vol_filter = input.bool(true, "Use Volume Filter", group=grp_cf)
+use_atr_filter = input.bool(true, "Use ATR Filter", group=grp_cf)
 
-signal_cooldown = input.int(3, "Signal Cooldown (bars)",          group=grp_wh, minval=1, tooltip="กันยิงสัญญาณซ้ำในช่วงสั้นๆ")
+// 1) H4 trend — กรองทิศหลัก
+h4_ema_len = input.int(50, "H4 EMA Trend Length", group=grp_cf, minval=20, tooltip="BUY เฉพาะ price > H4 EMA / SELL เฉพาะ price < H4 EMA")
 
-// Token ต้องตรงกับ backend/appsettings.json → WebhookSettings:Secret
-webhook_token = input.string("ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f", "Webhook Auth Token", group=grp_wh, tooltip="ตั้ง Webhook URL ใน TradingView Alert (script ตั้ง URL ไม่ได้)")
+// 2) H1 structure — ต้องเป็น higher high/low หรือ lower high/low ก่อน
+h1_ema_len = input.int(21, "H1 EMA Bias Length",  group=grp_cf, minval=10)
 
-// เปลี่ยนเลข (0→1→2…) เพื่อยิงทดสอบ — ต้องสร้าง Alert + Webhook URL ใน TradingView ก่อน!
-test_buy_n  = input.int(0, "🔬 Test BUY — เปลี่ยนเลขเพื่อยิง",  minval=0, group=grp_wh, tooltip="สร้าง Alert: LS+Vol Bot → alert() function calls only + ใส่ Webhook URL")
-test_sell_n = input.int(0, "🔬 Test SELL — เปลี่ยนเลขเพื่อยิง", minval=0, group=grp_wh)
-test_win_n  = input.int(0, "🔬 Test WIN — เปลี่ยนเลขเพื่อยิง",  minval=0, group=grp_wh)
-test_loss_n = input.int(0, "🔬 Test LOSS — เปลี่ยนเลขเพื่อยิง", minval=0, group=grp_wh)
+// 3) Volume confirmation บน MSS bar
+vol_len    = input.int(20,   "Volume MA Length",      group=grp_cf, minval=10)
+vol_mult   = input.float(1.0,"Volume Spike (×MA)",    group=grp_cf, minval=1.0, step=0.1)
 
-// ══════════════════════════════════════════════════════════
-// WEBHOOK PAYLOAD BUILDER
-// ══════════════════════════════════════════════════════════
-f_num(v) =>
-    str.tostring(math.round(v, 2))
+// 4) ATR filter — กรอง setup ในช่วง low volatility
+atr_len        = input.int(14,   "ATR Length",                    group=grp_cf, minval=5)
+min_atr_filter = input.float(0.8, "Min ATR for Trade (USD)", group=grp_cf, minval=0.1, step=0.1, tooltip="ไม่ trade เมื่อตลาด sideways เกินไป — ATR M5 ทองคำปกติ 2–5 USD")
 
-f_open_payload(action, entry, sl, tp, comment, signal_id) =>
-    '{"token":"' + webhook_token + '","action":"' + action + '","symbol":"XAUUSD","signal_id":"' + signal_id + '","entry_price":' + f_num(entry) + ',"sl":' + f_num(sl) + ',"tp":' + f_num(tp) + ',"rr":' + str.tostring(tp_rr) + ',"timeframe":"' + timeframe.period + '","bar_time":' + str.tostring(time) + ',"comment":"' + comment + '"}'
+// 5) MSS candle quality — body ต้องใหญ่พอ (momentum bar)
+mss_body_atr = input.float(0.3, "MSS Min Body (×ATR)", group=grp_cf, minval=0.1, step=0.1, tooltip="MSS bar ต้องมี body อย่างน้อย X×ATR — กรองหาง pinbar")
 
-f_close_payload(signal_id, entry, exit_p, profit, result) =>
-    '{"token":"' + webhook_token + '","action":"CLOSE_SIGNAL","symbol":"XAUUSD","signal_id":"' + signal_id + '","entry_price":' + f_num(entry) + ',"exit_price":' + f_num(exit_p) + ',"profit":' + str.tostring(profit) + ',"result":"' + result + '","timeframe":"' + timeframe.period + '","bar_time":' + str.tostring(time) + '}'
+// 6) Cooldown
+cooldown_bars = input.int(5, "Signal Cooldown (bars)", group=grp_cf, minval=3)
 
-// ══════════════════════════════════════════════════════════
-// VOLUME ANALYSIS
-// ══════════════════════════════════════════════════════════
-vol_ma    = ta.sma(volume, vol_ma_len)
-vol_spike = volume > vol_ma * vol_mult
+// ── SL / TP ──
+sl_buffer  = input.float(2.0, "SL Buffer beyond Sweep (USD)", group=grp_sl, minval=0.5, step=0.5)
+min_sl     = input.float(3.0, "Min SL (USD)", group=grp_sl, minval=1.0, step=0.5, tooltip="กรอง setup ที่ SL แคบเกินไป ไม่มีที่หายใจ")
+max_sl     = input.float(10.0, "Max SL (USD)", group=grp_sl, minval=1.0, step=1.0, tooltip="ระยะ SL สูงสุดไม่เกิน X USD ต่อไม้ (เช่น 10.0 USD = 1000 จุด/pips)")
+tp_rr      = input.float(1.5, "TP R:R", group=grp_sl, minval=1.0, step=0.5, tooltip="1.5 RR + winrate สูง = EV ดีกว่า 2RR + winrate ต่ำ")
+use_be     = input.bool(true,  "เปิดใช้งาน Breakeven",         group=grp_sl)
+be_trigger = input.float(1.2, "Breakeven Trigger (R)", group=grp_sl, minval=0.5, step=0.1, tooltip="เลื่อน SL บังทุนเมื่อกำไรถึง X เท่าของความเสี่ยง (แนะนำ 1.2R)")
+use_trail  = input.bool(false, "Trailing Stop", group=grp_sl, tooltip="ปิด trailing — สำหรับ win rate สูงให้ lock TP คงที่ดีกว่า")
 
-// ══════════════════════════════════════════════════════════
-// EQUAL HIGHS / EQUAL LOWS (Liquidity Pools)
-// ══════════════════════════════════════════════════════════
-ph = ta.pivothigh(high, eqh_lookback, eqh_lookback)
-pl = ta.pivotlow(low,  eqh_lookback, eqh_lookback)
+// --- ระบบบริหารความเสี่ยง (Risk Management) ---
+grp_risk    = "🛡 Risk Management"
+risk_mode   = input.string("Fixed Cash", title="Position Sizing Mode", options=["Fixed Contracts", "Fixed Cash", "Percent of Equity"], group=grp_risk)
+risk_amount = input.float(10.0, title="Risk Amount (USD or %)", minval=0.01, group=grp_risk, tooltip="ระบุเป็นจำนวนเงิน USD หรือ เปอร์เซ็นต์ของพอร์ต")
+fixed_qty   = input.float(1.0, title="Fixed Contracts Quantity", minval=0.01, group=grp_risk, tooltip="จำนวนสัญญาเริ่มต้นที่จะใช้เมื่อตั้งเป็น Fixed Contracts")
 
-var float last_ph = na
-var float last_pl = na
-var int   last_ph_bar = na
-var int   last_pl_bar = na
-
-if not na(ph)
-    if not na(last_ph) and math.abs(ph - last_ph) <= eq_tolerance
-        if show_liq
-            line.new(last_ph_bar, last_ph, bar_index - eqh_lookback, ph, color=color.new(color.red, 40), width=1, style=line.style_dashed)
-    last_ph     := ph
-    last_ph_bar := bar_index - eqh_lookback
-
-if not na(pl)
-    if not na(last_pl) and math.abs(pl - last_pl) <= eq_tolerance
-        if show_liq
-            line.new(last_pl_bar, last_pl, bar_index - eqh_lookback, pl, color=color.new(color.lime, 40), width=1, style=line.style_dashed)
-    last_pl     := pl
-    last_pl_bar := bar_index - eqh_lookback
+// ── Webhook ──
+webhook_token = input.string("ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f", "Auth Token", group=grp_wh)
 
 // ══════════════════════════════════════════════════════════
-// LIQUIDITY SWEEP DETECTION
+// WEBHOOK
 // ══════════════════════════════════════════════════════════
-recent_high = ta.highest(high, eqh_lookback)
-recent_low  = ta.lowest(low,   eqh_lookback)
+f_n(v) => str.tostring(math.round(v, 2))
 
-swept_high = high > recent_high[1] and close < recent_high[1]
-swept_low  = low  < recent_low[1]  and close > recent_low[1]
+f_open(act, ent, sl, tp, sid, vol) =>
+    '{"token":"' + webhook_token + '","action":"' + act + '","symbol":"XAUUSD","signal_id":"' + sid + '","entry":' + f_n(ent) + ',"sl":' + f_n(sl) + ',"tp":' + f_n(tp) + ',"volume":' + f_n(vol) + ',"rr":' + str.tostring(tp_rr) + ',"tf":"M5","t":' + str.tostring(time) + '}'
 
-plotshape(swept_high, "Sweep High", shape.triangledown, location.abovebar, color=color.new(color.red,  20), size=size.small)
-plotshape(swept_low,  "Sweep Low",  shape.triangleup,   location.belowbar, color=color.new(color.lime, 20), size=size.small)
-
-// ══════════════════════════════════════════════════════════
-// MARKET STRUCTURE SHIFT (MSS / ChoCh)
-// Sweep ต้องเกิดแท่งก่อนหน้า + MSS + Volume บนแท่งปัจจุบัน
-// ══════════════════════════════════════════════════════════
-swing_hi = ta.highest(high, mss_lookback)
-swing_lo = ta.lowest(low,   mss_lookback)
-
-mss_bull = close > swing_hi[1] and swept_low[1]
-mss_bear = close < swing_lo[1] and swept_high[1]
-
-plotshape(mss_bull, "MSS Bull", shape.labelup,   location.belowbar, color=color.new(color.teal,   10), text="MSS↑", textcolor=color.white, size=size.tiny)
-plotshape(mss_bear, "MSS Bear", shape.labeldown, location.abovebar, color=color.new(color.orange, 10), text="MSS↓", textcolor=color.white, size=size.tiny)
+f_close(sid, ent, ext, pnl, res) =>
+    '{"token":"' + webhook_token + '","action":"CLOSE","symbol":"XAUUSD","signal_id":"' + sid + '","entry":' + f_n(ent) + ',"exit":' + f_n(ext) + ',"pnl":' + str.tostring(pnl) + ',"result":"' + res + '","t":' + str.tostring(time) + '}'
 
 // ══════════════════════════════════════════════════════════
-// FAIR VALUE GAP (FVG) — แสดงผลเท่านั้น
+// INDICATORS
 // ══════════════════════════════════════════════════════════
-fvg_bull_exists = low[0] > high[2]
-fvg_bear_exists = low[2] > high[0]
+atr_val = ta.atr(atr_len)
+vol_ma  = ta.sma(volume, vol_len)
 
-bgcolor(fvg_bull_exists and show_liq ? color.new(color.teal,  90) : na, title="Bullish FVG")
-bgcolor(fvg_bear_exists and show_liq ? color.new(color.orange,90) : na, title="Bearish FVG")
+// H4 trend — กรองทิศหลัก (สำคัญที่สุดสำหรับ win rate ทองคำ)
+h4_ema   = request.security(syminfo.tickerid, "240", ta.ema(close, h4_ema_len)[1], barmerge.gaps_off, barmerge.lookahead_off)
+h4_close = request.security(syminfo.tickerid, "240", close[1],                      barmerge.gaps_off, barmerge.lookahead_off)
+h4_bull  = h4_close > h4_ema
+h4_bear  = h4_close < h4_ema
+
+// H1 bias — confirm momentum ระดับกลาง
+h1_ema   = request.security(syminfo.tickerid, "60", ta.ema(close, h1_ema_len)[1], barmerge.gaps_off, barmerge.lookahead_off)
+h1_close = request.security(syminfo.tickerid, "60", close[1],                      barmerge.gaps_off, barmerge.lookahead_off)
+h1_bull  = h1_close > h1_ema
+h1_bear  = h1_close < h1_ema
+
+// ทั้ง H4 และ H1 ต้องเป็นทิศเดียวกัน
+trend_bull = (not use_h4_trend or h4_bull) and (not use_h1_trend or h1_bull)
+trend_bear = (not use_h4_trend or h4_bear) and (not use_h1_trend or h1_bear)
+
+// ATR filter — ไม่ trade sideways
+atr_ok = not use_atr_filter or (atr_val >= min_atr_filter)
+
+// Volume
+vol_ok = not use_vol_filter or (volume > vol_ma * vol_mult)
 
 // ══════════════════════════════════════════════════════════
-// ENTRY SIGNALS
+// SWING HIGH / LOW (สำหรับ Sweep detection — แบบไม่มี Lag)
 // ══════════════════════════════════════════════════════════
-long_raw  = mss_bull and vol_spike
-short_raw = mss_bear and vol_spike
+last_sh     = ta.highest(high, sweep_lookback)[1]
+last_sl_val = ta.lowest(low, sweep_lookback)[1]
 
-long_sl  = ta.lowest(low, 3) - sl_buffer
-short_sl = ta.highest(high, 3) + sl_buffer
+// ══════════════════════════════════════════════════════════
+// SWEEP DETECTION
+// Condition: wick ทะลุ swing + close กลับมาอยู่ฝั่งเดิม
+//            + extension ต้องกว้างพอ (min_sweep_ext)
+// ══════════════════════════════════════════════════════════
+swept_high = not na(last_sh) and (high - last_sh) >= min_sweep_ext and close < last_sh
 
-long_sl_dist  = close - long_sl
-short_sl_dist = short_sl - close
+swept_low  = not na(last_sl_val) and (last_sl_val - low) >= min_sweep_ext and close > last_sl_val
 
-long_tp  = close + long_sl_dist  * tp_rr
-short_tp = close - short_sl_dist * tp_rr
+// บันทึก sweep event + track extreme ภายใน window
+var int   last_swept_high_bar = na
+var int   last_swept_low_bar  = na
+var float sweep_high_price    = na   // highest high ตั้งแต่ sweep high เกิด
+var float sweep_low_price     = na   // lowest  low  ตั้งแต่ sweep low  เกิด
 
-long_valid  = long_raw  and long_sl_dist  >= min_sl_usd and long_sl  < close and long_tp  > close
-short_valid = short_raw and short_sl_dist >= min_sl_usd and short_sl > close and short_tp < close
+if swept_high
+    last_swept_high_bar := bar_index
+    sweep_high_price    := high
+
+if swept_low
+    last_swept_low_bar := bar_index
+    sweep_low_price    := low
+
+// Track extreme ตลอด window (เพื่อ SL ที่ถูกต้อง)
+in_high_window = not na(last_swept_high_bar) and (bar_index - last_swept_high_bar) <= sw_window
+in_low_window  = not na(last_swept_low_bar)  and (bar_index - last_swept_low_bar)  <= sw_window
+
+if in_high_window and not swept_high
+    sweep_high_price := math.max(sweep_high_price, high)
+
+if in_low_window and not swept_low
+    sweep_low_price := math.min(sweep_low_price, low)
+
+// หมด window — reset
+if not in_high_window
+    sweep_high_price := na
+if not in_low_window
+    sweep_low_price  := na
+
+plotshape(show_sweep and swept_high, "Sweep High", shape.triangledown, location.abovebar, color=color.new(color.red,  10), size=size.small)
+plotshape(show_sweep and swept_low,  "Sweep Low",  shape.triangleup,   location.belowbar, color=color.new(color.lime, 10), size=size.small)
+
+// ══════════════════════════════════════════════════════════
+// MSS DETECTION — pivot-based
+// BUY MSS  = หลัง swept_low  → close ทะลุเหนือ pivot high ที่เกิดหลัง sweep
+// SELL MSS = หลัง swept_high → close ทะลุใต้  pivot low  ที่เกิดหลัง sweep
+// ══════════════════════════════════════════════════════════
+mss_ph = ta.pivothigh(high, mss_left, mss_right)
+mss_pl = ta.pivotlow(low,   mss_left, mss_right)
+
+var float mss_ref_high     = na
+var float mss_ref_low      = na
+var int   mss_ref_high_bar = na
+var int   mss_ref_low_bar  = na
+
+if not na(mss_ph)
+    mss_ref_high     := mss_ph
+    mss_ref_high_bar := bar_index - mss_right
+
+if not na(mss_pl)
+    mss_ref_low     := mss_pl
+    mss_ref_low_bar := bar_index - mss_right
+
+// ref ต้องเกิดก่อนหรือหลัง sweep ก็ได้ (รองรับ V-reversal)
+bull_ref_ok = not na(mss_ref_high) and not na(last_swept_low_bar)
+bear_ref_ok = not na(mss_ref_low)  and not na(last_swept_high_bar)
+
+// MSS = close ทะลุ ref + อยู่ใน window + body ใหญ่พอ (momentum)
+mss_body      = math.abs(close - open)
+mss_body_ok   = mss_body >= atr_val * mss_body_atr
+
+mss_bull_raw = in_low_window  and bull_ref_ok and close > mss_ref_high and mss_body_ok and close > open
+mss_bear_raw = in_high_window and bear_ref_ok and close < mss_ref_low  and mss_body_ok and close < open
+
+// ══════════════════════════════════════════════════════════
+// FINAL SIGNAL — รวม filter ทั้งหมด
+// Win rate logic:
+//   1) H4 + H1 ต้องเป็นทิศเดียวกัน (ไม่ trade counter-trend)
+//   2) Volume spike บน MSS bar (smart money เข้า)
+//   3) ATR ต้องพอ (ไม่ trade sideways)
+//   4) MSS bar ต้องเป็น momentum candle
+// ══════════════════════════════════════════════════════════
+
+// SL calculation
+long_sl_price  = not na(sweep_low_price)  ? sweep_low_price  - sl_buffer : low  - sl_buffer
+short_sl_price = not na(sweep_high_price) ? sweep_high_price + sl_buffer : high + sl_buffer
+
+long_sl_dist  = close - long_sl_price
+short_sl_dist = short_sl_price - close
+
+long_tp_price  = close + long_sl_dist  * tp_rr
+short_tp_price = close - short_sl_dist * tp_rr
+
+sl_ok_long  = long_sl_dist  >= min_sl and long_sl_dist  <= max_sl
+sl_ok_short = short_sl_dist >= min_sl and short_sl_dist <= max_sl
 
 var int last_long_bar  = na
 var int last_short_bar = na
+cd_ok_long  = na(last_long_bar)  or (bar_index - last_long_bar)  >= cooldown_bars
+cd_ok_short = na(last_short_bar) or (bar_index - last_short_bar) >= cooldown_bars
 
-long_cooldown_ok  = na(last_long_bar)  or bar_index - last_long_bar  >= signal_cooldown
-short_cooldown_ok = na(last_short_bar) or bar_index - last_short_bar >= signal_cooldown
+no_pos = strategy.position_size == 0
 
-long_signal  = long_valid  and long_cooldown_ok
-short_signal = short_valid and short_cooldown_ok
+long_signal  = mss_bull_raw and trend_bull and vol_ok and atr_ok and sl_ok_long  and cd_ok_long  and no_pos
+short_signal = mss_bear_raw and trend_bear and vol_ok and atr_ok and sl_ok_short and cd_ok_short and no_pos
 
-// เก็บ signal_id ล่าสุดสำหรับ CLOSE_SIGNAL
-var string last_open_signal_id = na
-
-// ══════════════════════════════════════════════════════════
-// STRATEGY ENTRIES (จำลอง SL/TP เพื่อทดสอบ CLOSE_SIGNAL)
-// ══════════════════════════════════════════════════════════
-if long_signal
-    strategy.entry("Long", strategy.long)
-    strategy.exit("Long Exit", "Long", stop=long_sl, limit=long_tp)
-
-if short_signal
-    strategy.entry("Short", strategy.short)
-    strategy.exit("Short Exit", "Short", stop=short_sl, limit=short_tp)
+plotshape(mss_bull_raw, "MSS↑", shape.labelup,   location.belowbar, color=color.new(color.teal,   20), text="MSS↑", textcolor=color.white, size=size.tiny)
+plotshape(mss_bear_raw, "MSS↓", shape.labeldown, location.abovebar, color=color.new(color.orange, 20), text="MSS↓", textcolor=color.white, size=size.tiny)
 
 // ══════════════════════════════════════════════════════════
-// ALERTS → .NET Backend (บันทึกสัญญาณ ไม่เปิด MT5)
+// TRADE STATE
 // ══════════════════════════════════════════════════════════
+var float t_sl_raw  = na
+var float t_sl      = na
+var float t_tp      = na
+var float t_risk    = na
+var string sid_long  = na
+var string sid_short = na
+
+pos_closed_long  = strategy.position_size <= 0 and strategy.position_size[1] > 0
+pos_closed_short = strategy.position_size >= 0 and strategy.position_size[1] < 0
+
+// ฟังก์ชันคำนวณขนาดไม้ตามความเสี่ยง (Risk Sizing)
+f_calc_qty(risk_dist) =>
+    float qty = na
+    if risk_dist > 0
+        if risk_mode == "Fixed Contracts"
+            qty := fixed_qty
+        else if risk_mode == "Fixed Cash"
+            qty := risk_amount / risk_dist
+        else if risk_mode == "Percent of Equity"
+            qty := (strategy.equity * (risk_amount / 100.0)) / risk_dist
+    qty := math.max(0.01, math.round(qty, 2))
+    qty
+
+// ── Entry ──
 if long_signal
     last_long_bar := bar_index
-    sid = str.tostring(time) + "_BUY"
-    last_open_signal_id := sid
-    alert(f_open_payload("BUY", close, long_sl, long_tp, "Sweep+MSS+Vol BUY", sid), alert.freq_once_per_bar_close)
+    t_sl_raw := long_sl_price
+    t_sl     := long_sl_price
+    t_risk   := na
+    t_tp     := na
+    q = f_calc_qty(long_sl_dist)
+    strategy.entry("Long", strategy.long, qty=q)
+    s = str.tostring(time) + "_BUY"
+    sid_long := s
+    alert(f_open("BUY", close, long_sl_price, long_tp_price, s, q), alert.freq_once_per_bar_close)
 
 if short_signal
     last_short_bar := bar_index
-    sid = str.tostring(time) + "_SELL"
-    last_open_signal_id := sid
-    alert(f_open_payload("SELL", close, short_sl, short_tp, "Sweep+MSS+Vol SELL", sid), alert.freq_once_per_bar_close)
+    t_sl_raw := short_sl_price
+    t_sl     := short_sl_price
+    t_risk   := na
+    t_tp     := na
+    q = f_calc_qty(short_sl_dist)
+    strategy.entry("Short", strategy.short, qty=q)
+    s = str.tostring(time) + "_SELL"
+    sid_short := s
+    alert(f_open("SELL", close, short_sl_price, short_tp_price, s, q), alert.freq_once_per_bar_close)
 
-if strategy.closedtrades > strategy.closedtrades[1]
-    last_idx = strategy.closedtrades - 1
-    trade_profit = strategy.closedtrades.profit(last_idx)
-    outcome = trade_profit > 0 ? "WIN" : "LOSS"
-    ent_price = strategy.closedtrades.entry_price(last_idx)
-    ext_price = strategy.closedtrades.exit_price(last_idx)
-    close_id = na(last_open_signal_id) ? str.tostring(time) + "_CLOSE" : last_open_signal_id
-    alert(f_close_payload(close_id, ent_price, ext_price, trade_profit, outcome), alert.freq_once_per_bar_close)
+// ── Compute risk จาก fill price จริง ──
+if strategy.position_size > 0 and not na(t_sl_raw) and na(t_risk)
+    ep = strategy.position_avg_price
+    r  = ep - t_sl_raw
+    if t_sl_raw >= ep
+        t_sl_raw := ep - min_sl
+        r := min_sl
+    t_risk := math.max(r, min_sl)
+    t_tp   := ep + t_risk * tp_rr
+    t_sl   := t_sl_raw
+
+if strategy.position_size < 0 and not na(t_sl_raw) and na(t_risk)
+    ep = strategy.position_avg_price
+    r  = t_sl_raw - ep
+    if t_sl_raw <= ep
+        t_sl_raw := ep + min_sl
+        r := min_sl
+    t_risk := math.max(r, min_sl)
+    t_tp   := ep - t_risk * tp_rr
+    t_sl   := t_sl_raw
+
+// ── BE Lock ──
+if strategy.position_size > 0 and not na(t_risk) and t_risk > 0
+    ep       = strategy.position_avg_price
+    base_sl  = ep - t_risk
+    profit_r = (close - ep) / t_risk
+    new_sl   = base_sl
+    if use_be and profit_r >= be_trigger
+        new_sl := math.max(new_sl, ep)
+    if use_trail and profit_r >= 1.0
+        steps  = math.floor(profit_r)
+        new_sl := math.max(new_sl, ep + (steps - 1) * t_risk)
+    t_sl := math.max(nz(t_sl, base_sl), new_sl)
+
+if pos_closed_long
+    t_sl_raw := na
+    t_sl     := na
+    t_tp     := na
+    t_risk   := na
+
+if strategy.position_size < 0 and not na(t_risk) and t_risk > 0
+    ep       = strategy.position_avg_price
+    base_sl  = ep + t_risk
+    profit_r = (ep - close) / t_risk
+    new_sl   = base_sl
+    if use_be and profit_r >= be_trigger
+        new_sl := math.min(new_sl, ep)
+    if use_trail and profit_r >= 1.0
+        steps  = math.floor(profit_r)
+        new_sl := math.min(new_sl, ep - (steps - 1) * t_risk)
+    t_sl := math.min(nz(t_sl, base_sl), new_sl)
+
+if pos_closed_short
+    t_sl_raw := na
+    t_sl     := na
+    t_tp     := na
+    t_risk   := na
+
+// ── Exits ──
+if strategy.position_size > 0 and not na(t_sl) and not na(t_tp)
+    strategy.exit("Long Exit", from_entry="Long", stop=t_sl, limit=t_tp)
+
+if strategy.position_size < 0 and not na(t_sl) and not na(t_tp)
+    strategy.exit("Short Exit", from_entry="Short", stop=t_sl, limit=t_tp)
+
+// ── Close Alert ──
+if strategy.closedtrades > nz(strategy.closedtrades[1], 0)
+    idx    = strategy.closedtrades - 1
+    pnl    = strategy.closedtrades.profit(idx)
+    res    = pnl > 0 ? "WIN" : "LOSS"
+    ep     = strategy.closedtrades.entry_price(idx)
+    xp     = strategy.closedtrades.exit_price(idx)
+    is_lng = strategy.closedtrades.size(idx) > 0
+    fb     = str.tostring(time) + "_CLOSE"
+    cid    = is_lng ? (na(sid_long) ? fb : sid_long) : (na(sid_short) ? fb : sid_short)
+    alert(f_close(cid, ep, xp, pnl, res), alert.freq_once_per_bar_close)
 
 // ══════════════════════════════════════════════════════════
 // VISUAL
 // ══════════════════════════════════════════════════════════
-plotshape(long_signal,  "BUY Signal",  shape.arrowup,   location.belowbar, color.new(color.green, 0), size=size.normal)
-plotshape(short_signal, "SELL Signal", shape.arrowdown, location.abovebar, color.new(color.red,   0), size=size.normal)
+plotshape(long_signal,  "BUY",  shape.arrowup,   location.belowbar, color.new(color.green, 0), size=size.normal)
+plotshape(short_signal, "SELL", shape.arrowdown, location.abovebar, color.new(color.red,   0), size=size.normal)
 
-barcolor(vol_spike and long_signal ? color.new(color.green, 30) : vol_spike and short_signal ? color.new(color.red, 30) : na)
+// SL / TP lines
+plot(strategy.position_size > 0 and not na(t_sl) ? t_sl : na, "SL", color=color.new(color.red,  20), style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size > 0 and not na(t_tp) ? t_tp : na, "TP", color=color.new(color.teal, 20), style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size < 0 and not na(t_sl) ? t_sl : na, "SL", color=color.new(color.red,  20), style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size < 0 and not na(t_tp) ? t_tp : na, "TP", color=color.new(color.teal, 20), style=plot.style_linebr, linewidth=1)
 
-// ══════════════════════════════════════════════════════════
-// INFO TABLE
-// ══════════════════════════════════════════════════════════
-var table info_tbl = table.new(position.top_right, 2, 9, border_width=1)
-if barstate.islast
-    table.cell(info_tbl, 0, 0, "LS+Vol Bot",     text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
-    table.cell(info_tbl, 1, 0, "Signal Test",    text_color=color.lime,  bgcolor=color.new(color.blue, 20), text_size=size.small)
-    table.cell(info_tbl, 0, 1, "Alert",          text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 1, buy_test_fire ? "ยิงแล้ว!" : "สร้าง Alert ก่อน", text_color=buy_test_fire ? color.lime : color.yellow, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 2, "Mode",           text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 2, "Webhook Only",   text_color=color.aqua,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 3, "TF",             text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 3, timeframe.period, text_color=color.white, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 4, "Vol Spike",      text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 4, vol_spike ? "YES" : "no", text_color=vol_spike ? color.lime : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 5, "MSS Bull",       text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 5, mss_bull ? "YES" : "no", text_color=mss_bull ? color.lime : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 6, "MSS Bear",       text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 6, mss_bear ? "YES" : "no", text_color=mss_bear ? color.red : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 7, "Valid BUY",      text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 7, long_valid ? "READY" : "—", text_color=long_valid ? color.lime : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 0, 8, "Valid SELL",     text_color=color.gray,  bgcolor=color.new(color.black, 50), text_size=size.tiny)
-    table.cell(info_tbl, 1, 8, short_valid ? "READY" : "—", text_color=short_valid ? color.red : color.gray, bgcolor=color.new(color.black, 50), text_size=size.tiny)
+// HTF EMA reference
+plot(h4_ema, "H4 EMA",  color=color.new(color.orange, 30), linewidth=2)
+plot(h1_ema, "H1 EMA",  color=color.new(color.yellow, 50), linewidth=1)
 
-// ══════════════════════════════════════════════════════════
-// MANUAL WEBHOOK TEST
-// สร้าง Alert แบบใดแบบหนึ่ง:
-//   A) Condition = "🔬 Test BUY Webhook" (แนะนำ — ง่ายกว่า)
-//   B) Condition = "alert() function calls only"
-// แล้วใส่ Webhook URL + เปลี่ยนเลข 0→1
-// ══════════════════════════════════════════════════════════
-buy_test_fire  = test_buy_n  > 0 and ta.change(test_buy_n)  != 0
-sell_test_fire = test_sell_n > 0 and ta.change(test_sell_n) != 0
-win_test_fire  = test_win_n  > 0 and ta.change(test_win_n)  != 0
-loss_test_fire = test_loss_n > 0 and ta.change(test_loss_n) != 0
-
-// alertcondition ใช้ const string + placeholder {{close}}
-// alert() ใช้ JSON เต็ม — สร้าง Alert แบบ "alert() function calls only"
-alertcondition(buy_test_fire,  title="🔬 Test BUY Webhook",  message='{"token":"ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f","action":"BUY","symbol":"XAUUSD","signal_id":"tv_test_buy","entry_price":{{close}},"sl":0,"tp":0,"timeframe":"{{interval}}","comment":"Manual Test BUY"}')
-alertcondition(sell_test_fire, title="🔬 Test SELL Webhook", message='{"token":"ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f","action":"SELL","symbol":"XAUUSD","signal_id":"tv_test_sell","entry_price":{{close}},"sl":0,"tp":0,"timeframe":"{{interval}}","comment":"Manual Test SELL"}')
-alertcondition(win_test_fire,  title="🔬 Test WIN Webhook",  message='{"token":"ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f","action":"CLOSE_SIGNAL","symbol":"XAUUSD","signal_id":"tv_test","entry_price":{{close}},"exit_price":{{close}},"profit":200,"result":"WIN","timeframe":"{{interval}}"}')
-alertcondition(loss_test_fire, title="🔬 Test LOSS Webhook", message='{"token":"ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f","action":"CLOSE_SIGNAL","symbol":"XAUUSD","signal_id":"tv_test","entry_price":{{close}},"exit_price":{{close}},"profit":-100,"result":"LOSS","timeframe":"{{interval}}"}')
-
-buy_test_msg  = f_open_payload("BUY", close, close - 10, close + 20, "Manual Test BUY", str.tostring(time) + "_TEST_BUY")
-sell_test_msg = f_open_payload("SELL", close, close + 10, close - 20, "Manual Test SELL", str.tostring(time) + "_TEST_SELL")
-win_test_msg  = f_close_payload(na(last_open_signal_id) ? str.tostring(time) + "_TEST" : last_open_signal_id, close - 20, close, 200.0, "WIN")
-loss_test_msg = f_close_payload(na(last_open_signal_id) ? str.tostring(time) + "_TEST" : last_open_signal_id, close + 10, close, -100.0, "LOSS")
-
-if buy_test_fire
-    last_open_signal_id := str.tostring(time) + "_TEST_BUY"
-    alert(buy_test_msg, alert.freq_once_per_bar)
-
-if sell_test_fire
-    last_open_signal_id := str.tostring(time) + "_TEST_SELL"
-    alert(sell_test_msg, alert.freq_once_per_bar)
-
-if win_test_fire
-    alert(win_test_msg, alert.freq_once_per_bar)
-
-if loss_test_fire
-    alert(loss_test_msg, alert.freq_once_per_bar)
-
-plotshape(buy_test_fire,  "Test BUY Sent",  shape.labelup,   location.belowbar, color=color.lime,  text="BUY→",  textcolor=color.white, size=size.tiny)
-plotshape(sell_test_fire, "Test SELL Sent", shape.labeldown, location.abovebar, color=color.red,   text="SELL→", textcolor=color.white, size=size.tiny)
+// Background เมื่อ trend align
+bgcolor(trend_bull ? color.new(color.teal,  97) : na, title="Bullish Bias")
+bgcolor(trend_bear ? color.new(color.orange,97) : na, title="Bearish Bias")

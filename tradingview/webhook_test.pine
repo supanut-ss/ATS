@@ -14,7 +14,7 @@ grp = "Webhook Test"
 webhook_token = input.string("ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f", "Webhook Token", group=grp, tooltip="ใช้กับ alert() เท่านั้น — alertcondition ใช้ token ค่า default ใน script")
 fire_n        = input.int(0, "Fire counter (0→1→2 เพื่อยิง)", minval=0, group=grp)
 
-fire = fire_n > 0 and ta.change(fire_n) != 0
+fire = barstate.islast and fire_n > 0
 
 // alertcondition ต้องใช้ const string — ใช้ placeholder {{close}} {{interval}} ของ TradingView
 alertcondition(fire, title="🔬 Fire Test BUY", message='{"token":"ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f","action":"BUY","symbol":"XAUUSD","signal_id":"tv_test","entry_price":{{close}},"sl":0,"tp":0,"timeframe":"{{interval}}","comment":"Webhook Test"}')
