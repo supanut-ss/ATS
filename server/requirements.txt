@@ -1,4 +1,0 @@
-MetaTrader5
-Flask
-flask-cors
-python-dotenv

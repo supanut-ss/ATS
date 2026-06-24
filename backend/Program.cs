@@ -140,18 +140,19 @@ app.MapPost("/webhook", async (HttpContext context) =>
                 Tp = payload.Tp,
                 Rr = payload.Rr,
                 EntryPrice = payload.EntryPrice > 0 ? payload.EntryPrice : 0.0,
-                Status = "OPEN",
+                Volume = payload.Volume > 0 ? payload.Volume : 0.01,
+                Status = action == "BUY" ? "PENDING_BUY" : "PENDING_SELL",
                 Comment = payload.Comment ?? ""
             };
             signals.Add(newSignal);
             WriteSignals(signals);
 
-            var res = new { ok = true, message = $"{action} signal logged", signalId = newSignal.Id, mode = "signal_test" };
+            var res = new { ok = true, message = $"{action} signal queued (PENDING)", signalId = newSignal.Id, mode = "mql5_ea" };
             AddLog(action, body, res);
             return Results.Ok(res);
         }
 
-        if (action == "CLOSE_SIGNAL")
+        if (action is "CLOSE" or "CLOSE_SIGNAL")
         {
             Signal? target = null;
 
@@ -175,14 +176,13 @@ app.MapPost("/webhook", async (HttpContext context) =>
                 return Results.Ok(err);
             }
 
-            target.Status = payload.Result?.ToUpper() == "WIN" ? "WIN" : "LOSS";
-            target.ExitPrice = payload.ExitPrice;
-            target.Profit = payload.Profit;
-            if (target.EntryPrice == 0.0 && payload.EntryPrice > 0)
-                target.EntryPrice = payload.EntryPrice;
-
+            // เปลี่ยนสถานะเป็น PENDING_CLOSE เพื่อให้ EA ทราบว่าต้องปิดไม้
+            target.Status = "PENDING_CLOSE";
+            if (payload.ExitPrice > 0) target.ExitPrice = payload.ExitPrice;
+            if (payload.Profit != 0) target.Profit = payload.Profit;
+            
             WriteSignals(signals);
-            var closeRes = new { ok = true, message = $"Signal {target.Id} → {target.Status}", profit = target.Profit, mode = "signal_test" };
+            var closeRes = new { ok = true, message = $"Signal {target.Id} queued for close (PENDING_CLOSE)", ticket = target.Ticket, mode = "mql5_ea" };
             AddLog(action, body, closeRes);
             return Results.Ok(closeRes);
         }
@@ -199,15 +199,43 @@ app.MapPost("/webhook", async (HttpContext context) =>
 });
 
 // ──────────────────────────────────────────────
-// API: Signals & Status (โหมดทดสอบ)
+// API: Signals & Status (รองรับ MQL5 EA)
 // ──────────────────────────────────────────────
 app.MapGet("/api/signals", () => Results.Ok(ReadSignals()));
+
+// ขอดึงเฉพาะออเดอร์ที่ค้างการออกไม้หรือค้างการปิดออเดอร์ (สำหรับ EA)
+app.MapGet("/api/signals/pending", ([FromQuery] string token) =>
+{
+    if (token != webhookSecret) return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
+    var signals = ReadSignals();
+    var pending = signals.Where(s => s.Status.StartsWith("PENDING_")).ToList();
+    return Results.Ok(pending);
+});
+
+// รับรายงานผลการเปิด/ปิดไม้จริงจาก EA บน MT5
+app.MapPost("/api/signals/update", ([FromBody] SignalUpdatePayload payload) =>
+{
+    if (payload.Token != webhookSecret) return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
+    
+    var signals = ReadSignals();
+    var target = signals.FirstOrDefault(s => s.Id == payload.Id);
+    if (target == null) return Results.NotFound(new { ok = false, error = "Signal not found" });
+
+    target.Status = payload.Status.ToUpper();
+    if (!string.IsNullOrWhiteSpace(payload.Ticket)) target.Ticket = payload.Ticket;
+    if (payload.EntryPrice > 0) target.EntryPrice = payload.EntryPrice;
+    if (payload.ExitPrice > 0) target.ExitPrice = payload.ExitPrice;
+    if (payload.Profit != 0) target.Profit = payload.Profit;
+
+    WriteSignals(signals);
+    AddLog($"UPDATE_{target.Status}", JsonSerializer.Serialize(payload), new { ok = true, message = $"Signal updated to {target.Status}" });
+    return Results.Ok(new { ok = true, message = $"Signal updated to {target.Status}" });
+});
 
 app.MapPost("/api/signals/clear", () =>
 {
     WriteSignals(new List<Signal>());
 
-    // ลบไฟล์เก่าจากเวอร์ชันก่อนหน้า (เก็บใน Temp)
     var legacyPath = Path.Combine(Path.GetTempPath(), "ats_signals_db.json");
     if (File.Exists(legacyPath))
         File.Delete(legacyPath);
@@ -217,13 +245,20 @@ app.MapPost("/api/signals/clear", () =>
 
 app.MapGet("/api/webhook/log", () => Results.Ok(webhookLog.OrderByDescending(l => l.Timestamp).Take(20)));
 
-app.MapGet("/api/status", () => Results.Ok(new
+app.MapGet("/api/status", () =>
 {
-    ok = true,
-    mode = "signal_test",
-    mt5_connected = false,
-    message = "โหมดทดสอบสัญญาณ — ยังไม่เชื่อม MT5"
-}));
+    var signals = ReadSignals();
+    var openCount = signals.Count(s => s.Status == "OPEN");
+    var pendingCount = signals.Count(s => s.Status.StartsWith("PENDING_"));
+    return Results.Ok(new
+    {
+        ok = true,
+        mode = "mql5_ea",
+        open_trades = openCount,
+        pending_signals = pendingCount,
+        message = "ระบบพร้อมเชื่อมต่อกับ MQL5 EA เรียบร้อย"
+    });
+});
 
 app.Run();
 
@@ -253,7 +288,9 @@ public class Signal
     public double ExitPrice { get; set; }
 
     public double Profit { get; set; }
-    public string Status { get; set; } = "OPEN";
+    public double Volume { get; set; }
+    public string Ticket { get; set; } = string.Empty;
+    public string Status { get; set; } = "PENDING_BUY"; // PENDING_BUY, PENDING_SELL, PENDING_CLOSE, OPEN, WIN, LOSS
     public string Comment { get; set; } = string.Empty;
 }
 
@@ -269,6 +306,7 @@ public class WebhookPayload
     public double Sl { get; set; }
     public double Tp { get; set; }
     public double Rr { get; set; }
+    public double Volume { get; set; }
 
     [JsonPropertyName("entry_price")]
     public double EntryPrice { get; set; }
@@ -292,4 +330,28 @@ public class WebhookLogEntry
     public string Body { get; set; } = string.Empty;
     public object? Result { get; set; }
     public string? Error { get; set; }
+}
+
+public class SignalUpdatePayload
+{
+    [JsonPropertyName("token")]
+    public string Token { get; set; } = string.Empty;
+
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("ticket")]
+    public string Ticket { get; set; } = string.Empty;
+
+    [JsonPropertyName("entry_price")]
+    public double EntryPrice { get; set; }
+
+    [JsonPropertyName("exit_price")]
+    public double ExitPrice { get; set; }
+
+    [JsonPropertyName("profit")]
+    public double Profit { get; set; }
 }
