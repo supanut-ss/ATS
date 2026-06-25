@@ -140,7 +140,7 @@ export default function SignalsTracker({ signals, loading, onRefresh }) {
 
       {/* History Table */}
       <TableContainer component={Paper}>
-        <Table>
+        <Table sx={{ minWidth: { xs: 650, lg: '100%' } }}>
           <TableHead sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
             <TableRow>
               <TableCell sx={{ fontWeight: 700 }}>Time</TableCell>

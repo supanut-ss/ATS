@@ -107,7 +107,7 @@ export default function PositionsTable({ positions = [], onRefresh }) {
       ) : (
         /* TableContainer fills remaining height, no extra px padding */
         <TableContainer sx={{ flexGrow: 1, overflow: 'auto' }}>
-          <Table size="small" stickyHeader sx={{ tableLayout: 'fixed', width: '100%' }}>
+          <Table size="small" stickyHeader sx={{ tableLayout: 'fixed', width: '100%', minWidth: { xs: 600, lg: '100%' } }}>
             <TableHead>
               <TableRow>
                 {[

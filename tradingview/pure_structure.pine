@@ -1,6 +1,6 @@
 //@version=6
 strategy(
-     title               = "Pure Structure + EMA 200 v6",
+     title               = "Pure Structure + EMA 200 v6 [Fixed]",
      overlay             = true,
      initial_capital     = 10000,
      default_qty_type    = strategy.fixed,
@@ -12,58 +12,71 @@ strategy(
  )
 
 // ==========================================
-// 1. Inputs: ตั้งค่าระบบ
+// 1. Inputs
 // ==========================================
-pivot_length = input.int(5, title="Pivot Lookback Length", minval=1)
-rr_ratio = input.float(1.5, title="Risk/Reward Ratio")
-// เผื่อระยะ SL (ดอลลาร์) — สำหรับ XAUUSD แนะนำ 1.5 - 3.0 USD เพื่อกันการสะบัดโดน SL เร็วไป
-sl_buffer = input.float(1.5, title="เผื่อระยะ SL (ดอลลาร์)") 
-max_sl    = input.float(10.0, title="Max SL (USD)", tooltip="ระยะ SL สูงสุดไม่เกิน X USD ต่อไม้ (เช่น 10.0 USD = 1000 จุด/pips)") 
+pivot_length     = input.int(3, title="Pivot Lookback Length", minval=1)
+rr_ratio         = input.float(1.5, title="Risk/Reward Ratio (ตามเทรนด์)")
+rr_ratio_counter = input.float(1.0, title="Risk/Reward Ratio (สวนเทรนด์)", tooltip="R:R สำหรับไม้ที่สวนเทรนด์หลัก H1 & H4")
+sl_buffer        = input.float(1.5, title="เผื่อระยะ SL (ดอลลาร์)")
+max_sl           = input.float(13.0, title="Max SL (USD)", tooltip="ระยะ SL สูงสุดไม่เกิน X USD ต่อไม้")
+pd_threshold     = input.float(0.618, title="Premium/Discount Fib Threshold", minval=0.1, maxval=0.75, step=0.05,
+     tooltip="ระดับที่ราคาต้องย่อตัวเข้ามาเพื่อเข้าออเดอร์ (0.618 = Fib golden ratio)")
 
-// --- ปรับเพื่อดึง Win Rate (Fib Levels & Trigger) ---
-pd_threshold = input.float(0.5, title="Premium/Discount Fib Threshold", minval=0.1, maxval=0.5, step=0.05, tooltip="ระดับที่ราคาต้องย่อตัวเข้ามาเพื่อเข้าออเดอร์ (เช่น 0.5 หรือ 0.382)") 
-
-// --- ระบบบริหารความเสี่ยง (Risk Management) ---
+// --- Risk Management ---
 grp_risk    = "🛡 Risk Management"
 risk_mode   = input.string("Fixed Cash", title="Position Sizing Mode", options=["Fixed Contracts", "Fixed Cash", "Percent of Equity"], group=grp_risk)
-risk_amount = input.float(10.0, title="Risk Amount (USD or %)", minval=0.01, group=grp_risk, tooltip="ระบุเป็นจำนวนเงิน USD หรือ เปอร์เซ็นต์ของพอร์ต")
-fixed_qty   = input.float(1.0, title="Fixed Contracts Quantity", minval=0.01, group=grp_risk, tooltip="จำนวนสัญญาเริ่มต้นที่จะใช้เมื่อตั้งเป็น Fixed Contracts")
+risk_amount = input.float(10.0, title="Risk Amount (USD or %)", minval=0.01, group=grp_risk)
+fixed_qty   = input.float(1.0, title="Fixed Contracts Quantity", minval=0.01, group=grp_risk)
 
-// --- เพิ่มส่วนล็อกกำไร (BE & Trailing Stop) ---
+// --- BE & Trailing Stop ---
 use_be     = input.bool(true, title="เปิดใช้งาน Breakeven")
-be_trigger = input.float(1.2, title="Breakeven Trigger (R)", minval=0.5, step=0.1, tooltip="เลื่อน SL บังทุนเมื่อกำไรถึง X เท่าของความเสี่ยง (แนะนำ 1.2R)")
+be_trigger = input.float(1.2, title="Breakeven Trigger (R)", minval=0.5, step=0.1)
 use_trail  = input.bool(false, title="เปิดใช้งาน Trailing Stop (ขยับ SL ตาม 1R)")
 
-// --- เพิ่มส่วนตั้งค่า EMA ---
-grp_trend  = "📈 Trend Filters"
-use_ema    = input.bool(false, title="เปิดใช้งานตัวกรอง EMA 200 (M5)", group=grp_trend)
-ema_length = input.int(200, title="M5 EMA Length", group=grp_trend)
-use_h1_trend = input.bool(true, title="เปิดใช้งานตัวกรองเทรนด์ H1", group=grp_trend)
-h1_ema_len = input.int(21, title="H1 EMA Length", minval=5, group=grp_trend)
+// --- Trend Filters ---
+grp_trend            = "📈 Trend Filters"
+use_ema              = input.bool(false, title="เปิดใช้งานตัวกรอง EMA 200 (M5)", group=grp_trend)
+ema_length           = input.int(200, title="M5 EMA Length", group=grp_trend)
+use_h1_trend         = input.bool(true, title="เปิดใช้งานเทรนด์ H1", group=grp_trend)
+h1_ema_len           = input.int(21, title="H1 EMA Length", minval=5, group=grp_trend)
+use_h4_trend         = input.bool(true, title="เปิดใช้งานเทรนด์ H4", group=grp_trend)
+h4_ema_len           = input.int(21, title="H4 EMA Length", minval=5, group=grp_trend)
+filter_counter_trend = input.bool(false, title="บล็อกไม้สวนเทรนด์ทั้งหมด (ไม่เปิดไม้)", group=grp_trend,
+     tooltip="หากเปิดใช้: จะห้ามออกไม้สวนเทรนด์เลย (เหมือนเดิม) / หากปิดใช้: สวนเทรนด์ได้แต่เก็บ TP สั้นลง")
 
 // ── Webhook ──
-grp_wh  = "🔗 Webhook"
+grp_wh        = "🔗 Webhook"
 webhook_token = input.string("ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f", "Auth Token", group=grp_wh)
 
 f_n(v) => str.tostring(math.round(v, 2))
 
-f_open(act, ent, sl, tp, sid, vol) =>
-    '{"token":"' + webhook_token + '","action":"' + act + '","symbol":"XAUUSD","signal_id":"' + sid + '","entry":' + f_n(ent) + ',"sl":' + f_n(sl) + ',"tp":' + f_n(tp) + ',"volume":' + f_n(vol) + ',"rr":' + str.tostring(rr_ratio) + ',"tf":"' + timeframe.period + '","t":' + str.tostring(time) + '}'
+f_open(act, ent, sl, tp, sid, vol, rr) =>
+    '{"token":"' + webhook_token + '","action":"' + act + '","symbol":"XAUUSD","signal_id":"' + sid + '","entry":' + f_n(ent) + ',"sl":' + f_n(sl) + ',"tp":' + f_n(tp) + ',"volume":' + f_n(vol) + ',"rr":' + str.tostring(rr) + ',"tf":"' + timeframe.period + '","t":' + str.tostring(time) + '}'
 
 f_close(sid, ent, ext, pnl, res) =>
     '{"token":"' + webhook_token + '","action":"CLOSE","symbol":"XAUUSD","signal_id":"' + sid + '","entry":' + f_n(ent) + ',"exit":' + f_n(ext) + ',"pnl":' + str.tostring(pnl) + ',"result":"' + res + '","t":' + str.tostring(time) + '}'
 
 // ==========================================
-// 1.5 EMA & Multi-Timeframe Trend Calculation
+// 1.5 EMA & Multi-Timeframe Trend
 // ==========================================
 ema_line = ta.ema(close, ema_length)
 plot(use_ema ? ema_line : na, color=color.white, linewidth=2, title="EMA Filter")
 
-// H1 Trend Filter (Lag-free security call)
+// H1 Trend
 h1_ema   = request.security(syminfo.tickerid, "60", ta.ema(close, h1_ema_len)[1], barmerge.gaps_off, barmerge.lookahead_off)
 h1_close = request.security(syminfo.tickerid, "60", close[1],                      barmerge.gaps_off, barmerge.lookahead_off)
 h1_bull  = h1_close > h1_ema
 h1_bear  = h1_close < h1_ema
+
+// H4 Trend
+h4_ema   = request.security(syminfo.tickerid, "240", ta.ema(close, h4_ema_len)[1], barmerge.gaps_off, barmerge.lookahead_off)
+h4_close = request.security(syminfo.tickerid, "240", close[1],                      barmerge.gaps_off, barmerge.lookahead_off)
+h4_bull  = h4_close > h4_ema
+h4_bear  = h4_close < h4_ema
+
+// HTF Trend confirmation
+htf_bull = (not use_h1_trend or h1_bull) and (not use_h4_trend or h4_bull)
+htf_bear = (not use_h1_trend or h1_bear) and (not use_h4_trend or h4_bear)
 
 // ==========================================
 // 2. Market Structure & Labeling
@@ -71,79 +84,73 @@ h1_bear  = h1_close < h1_ema
 ph = ta.pivothigh(high, pivot_length, pivot_length)
 pl = ta.pivotlow(low, pivot_length, pivot_length)
 
-var float last_ph = na
-var float last_pl = na
-var float prev_ph = na
-var float prev_pl = na
-var int last_ph_bar = na
-var int last_pl_bar = na
-
-// Zig Zag Drawing State
-var int last_pivot_bar = na
-var float last_pivot_price = na
-var string last_pivot_type = na // "H" or "L"
-var line zigzag_line = na
-var int trend = 0 
+var float  last_ph       = na
+var float  last_pl       = na
+var float  prev_ph       = na
+var float  prev_pl       = na
+var int    last_ph_bar   = na
+var int    last_pl_bar   = na
+var int    last_pivot_bar   = na
+var float  last_pivot_price = na
+var string last_pivot_type  = na
+var line   zigzag_line      = na
+var int    trend            = 0
 
 if not na(ph)
-    prev_ph := last_ph
-    last_ph := ph
-    last_ph_bar := bar_index - pivot_length
-    
+    prev_ph      := last_ph
+    last_ph      := ph
+    last_ph_bar  := bar_index - pivot_length
     if last_pivot_type == "L"
-        zigzag_line := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_ph_bar, y2=ph, color=color.new(color.orange, 20), width=2)
-        last_pivot_bar := last_ph_bar
+        zigzag_line      := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_ph_bar, y2=ph, color=color.new(color.orange, 20), width=2)
+        last_pivot_bar   := last_ph_bar
         last_pivot_price := ph
-        last_pivot_type := "H"
+        last_pivot_type  := "H"
     else if last_pivot_type == "H"
         if ph > last_pivot_price
             line.set_x2(zigzag_line, last_ph_bar)
             line.set_y2(zigzag_line, ph)
-            last_pivot_bar := last_ph_bar
+            last_pivot_bar   := last_ph_bar
             last_pivot_price := ph
     else
-        last_pivot_bar := last_ph_bar
+        last_pivot_bar   := last_ph_bar
         last_pivot_price := ph
-        last_pivot_type := "H"
+        last_pivot_type  := "H"
 
 if not na(pl)
-    prev_pl := last_pl
-    last_pl := pl
-    last_pl_bar := bar_index - pivot_length
-    
+    prev_pl      := last_pl
+    last_pl      := pl
+    last_pl_bar  := bar_index - pivot_length
     if last_pivot_type == "H"
-        zigzag_line := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_pl_bar, y2=pl, color=color.new(color.teal, 20), width=2)
-        last_pivot_bar := last_pl_bar
+        zigzag_line      := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_pl_bar, y2=pl, color=color.new(color.teal, 20), width=2)
+        last_pivot_bar   := last_pl_bar
         last_pivot_price := pl
-        last_pivot_type := "L"
+        last_pivot_type  := "L"
     else if last_pivot_type == "L"
         if pl < last_pivot_price
             line.set_x2(zigzag_line, last_pl_bar)
             line.set_y2(zigzag_line, pl)
-            last_pivot_bar := last_pl_bar
+            last_pivot_bar   := last_pl_bar
             last_pivot_price := pl
     else
-        last_pivot_bar := last_pl_bar
+        last_pivot_bar   := last_pl_bar
         last_pivot_price := pl
-        last_pivot_type := "L"
-
+        last_pivot_type  := "L"
 
 // ==========================================
 // 3. Break of Structure
 // ==========================================
 if trend <= 0 and close > last_ph
-    trend := 1 
+    trend := 1
 
 if trend >= 0 and close < last_pl
-    trend := -1 
+    trend := -1
 
 // ==========================================
-// 4. Premium / Discount & Fixed PA (Optimized v2)
+// 4. Premium / Discount & PA
 // ==========================================
 var float swing_high = na
-var float swing_low = na
+var float swing_low  = na
 
-// Reset/Update swing boundaries based on trend
 if trend == 1
     swing_low  := nz(swing_low, last_pl)
     swing_high := math.max(nz(swing_high, high), high)
@@ -151,7 +158,6 @@ else if trend == -1
     swing_high := nz(swing_high, last_ph)
     swing_low  := math.min(nz(swing_low, low), low)
 
-// Reset boundaries when trend flips
 if ta.change(trend) != 0
     if trend == 1
         swing_low  := last_pl
@@ -160,63 +166,63 @@ if ta.change(trend) != 0
         swing_high := last_ph
         swing_low  := low
 
-swing_range = swing_high - swing_low
-discount_level = swing_low + (swing_range * pd_threshold)
+swing_range    = swing_high - swing_low
+discount_level = swing_low  + (swing_range * pd_threshold)
 premium_level  = swing_high - (swing_range * pd_threshold)
 
-// ระบบบันทึกการแตะโซนราคาถูก/แพง (Stateful Touch Logic)
 var bool touched_discount = false
-var bool touched_premium = false
+var bool touched_premium  = false
 
+// เซ็ต flag เมื่อราคาแตะโซน
 if trend == 1 and low <= discount_level
     touched_discount := true
+
+// Reset เฉพาะเมื่อ: เทรนด์เปลี่ยน หรือ มีไม้อยู่แล้ว
+// ไม่ใช้ midpoint reset เพราะ close มักสูงกว่า midpoint อยู่แล้วในแท่งที่แตะโซน
 if trend != 1 or strategy.position_size > 0
     touched_discount := false
 
 if trend == -1 and high >= premium_level
     touched_premium := true
+
 if trend != -1 or strategy.position_size > 0
     touched_premium := false
 
-// ราคาปิดคอนเฟิร์มการเด้งตัว (Aggressive PA: แท่งสีกำลังสลับและปิดชนะราคาปิดแท่งก่อน)
-bullish_pa = close[1] < open[1] and close > open and close > close[1]
-bearish_pa = close[1] > open[1] and close < open and close < close[1]
+// PA Confirmation — ผ่อนปรน: แค่แท่งสลับสี
+bullish_pa = close[1] < open[1] and close > open
+bearish_pa = close[1] > open[1] and close < open
 
-// --- เพิ่มเงื่อนไข EMA เช็คเทรนด์หลัก ---
+// Trend filter conditions
 ema_long_cond  = use_ema ? (close > ema_line) : true
 ema_short_cond = use_ema ? (close < ema_line) : true
-h1_long_cond   = use_h1_trend ? h1_bull : true
-h1_short_cond  = use_h1_trend ? h1_bear : true
 
-longCondition  = trend == 1 and touched_discount and bullish_pa and ema_long_cond and h1_long_cond and strategy.position_size == 0
-shortCondition = trend == -1 and touched_premium and bearish_pa and ema_short_cond and h1_short_cond and strategy.position_size == 0
+// If filter_counter_trend is active, we block entries against HTF trend
+long_trend_ok  = not filter_counter_trend or not htf_bear
+short_trend_ok = not filter_counter_trend or not htf_bull
+
+longCondition  = trend == 1  and touched_discount and bullish_pa and ema_long_cond  and long_trend_ok  and strategy.position_size == 0
+shortCondition = trend == -1 and touched_premium  and bearish_pa and ema_short_cond and short_trend_ok and strategy.position_size == 0
 
 // ==========================================
 // 5. Execution & Risk Management
 // ==========================================
-// ==========================================
-// 5. Execution & Risk Management
-// ==========================================
-var float t_entry_long = na
-var float t_sl_long    = na
-var float t_tp_long    = na
-var float t_risk_long  = na
-
-var float t_entry_short = na
-var float t_sl_short    = na
-var float t_tp_short    = na
-var float t_risk_short  = na
-
-var string sid_long  = na
-var string sid_short = na
+var float  t_entry_long  = na
+var float  t_sl_long     = na
+var float  t_tp_long     = na
+var float  t_risk_long   = na
+var float  t_entry_short = na
+var float  t_sl_short    = na
+var float  t_tp_short    = na
+var float  t_risk_short  = na
+var string sid_long      = na
+var string sid_short     = na
 
 pos_closed_long  = strategy.position_size <= 0 and strategy.position_size[1] > 0
 pos_closed_short = strategy.position_size >= 0 and strategy.position_size[1] < 0
 
-is_entering_long = false
+is_entering_long  = false
 is_entering_short = false
 
-// ฟังก์ชันคำนวณขนาดไม้ตามความเสี่ยง (Risk Sizing)
 f_calc_qty(risk_dist) =>
     float qty = na
     if risk_dist > 0
@@ -226,63 +232,65 @@ f_calc_qty(risk_dist) =>
             qty := risk_amount / risk_dist
         else if risk_mode == "Percent of Equity"
             qty := (strategy.equity * (risk_amount / 100.0)) / risk_dist
-    // ป้องกันค่า Qty ต่ำเกินไปหรือทศนิยมละเอียดเกินไป (จำกัดขั้นต่ำ 0.01 สัญญา และปัดเศษทศนิยม 2 ตำแหน่ง)
     qty := math.max(0.01, math.round(qty, 2))
     qty
 
+// Determine dynamic RR ratio for this trade
+active_rr_long  = htf_bear ? rr_ratio_counter : rr_ratio
+active_rr_short = htf_bull ? rr_ratio_counter : rr_ratio
+
 if longCondition
     sl_price = swing_low - sl_buffer
-    risk = close - sl_price
-    // ป้องกันระยะความเสี่ยงกว้างเกินไปไม่ให้ออกไม้เทรด (ไม่เกิน max_sl)
+    risk     = close - sl_price
     if risk > 0 and risk <= max_sl
-        tp_price = close + (risk * rr_ratio)
-        q = f_calc_qty(risk)
+        tp_price         = close + (risk * active_rr_long)
+        q                = f_calc_qty(risk)
         strategy.entry("Buy", strategy.long, qty=q)
-        t_entry_long := close
-        t_sl_long := sl_price
-        t_tp_long := tp_price
-        t_risk_long := risk
-        s = str.tostring(time) + "_BUY"
-        sid_long := s
+        t_entry_long     := close
+        t_sl_long        := sl_price
+        t_tp_long        := tp_price
+        t_risk_long      := risk
+        s                = str.tostring(time) + "_BUY"
+        sid_long         := s
         is_entering_long := true
-        alert(f_open("BUY", close, sl_price, tp_price, s, q), alert.freq_once_per_bar_close)
+        alert(f_open("BUY", close, sl_price, tp_price, s, q, active_rr_long), alert.freq_once_per_bar_close)
 
 if shortCondition
     sl_price = swing_high + sl_buffer
-    risk = sl_price - close
+    risk     = sl_price - close
     if risk > 0 and risk <= max_sl
-        tp_price = close - (risk * rr_ratio)
-        q = f_calc_qty(risk)
+        tp_price          = close - (risk * active_rr_short)
+        q                 = f_calc_qty(risk)
         strategy.entry("Sell", strategy.short, qty=q)
-        t_entry_short := close
-        t_sl_short := sl_price
-        t_tp_short := tp_price
-        t_risk_short := risk
-        s = str.tostring(time) + "_SELL"
-        sid_short := s
+        t_entry_short     := close
+        t_sl_short        := sl_price
+        t_tp_short        := tp_price
+        t_risk_short      := risk
+        s                 = str.tostring(time) + "_SELL"
+        sid_short         := s
         is_entering_short := true
-        alert(f_open("SELL", close, sl_price, tp_price, s, q), alert.freq_once_per_bar_close)
+        alert(f_open("SELL", close, sl_price, tp_price, s, q, active_rr_short), alert.freq_once_per_bar_close)
 
-// ── BE & Trailing Stop Updates ──
+// ── BE & Trailing Stop ──
 if strategy.position_size > 0 and not na(t_risk_long) and t_risk_long > 0
-    ep = strategy.position_avg_price
+    ep       = strategy.position_avg_price
     profit_r = (close - ep) / t_risk_long
-    new_sl = t_sl_long
+    new_sl   = t_sl_long
     if use_be and profit_r >= be_trigger
         new_sl := math.max(new_sl, ep)
     if use_trail and profit_r >= 1.0
-        steps = math.floor(profit_r)
+        steps  = math.floor(profit_r)
         new_sl := math.max(new_sl, ep + (steps - 1) * t_risk_long)
     t_sl_long := new_sl
 
 if strategy.position_size < 0 and not na(t_risk_short) and t_risk_short > 0
-    ep = strategy.position_avg_price
+    ep       = strategy.position_avg_price
     profit_r = (ep - close) / t_risk_short
-    new_sl = t_sl_short
+    new_sl   = t_sl_short
     if use_be and profit_r >= be_trigger
         new_sl := math.min(new_sl, ep)
     if use_trail and profit_r >= 1.0
-        steps = math.floor(profit_r)
+        steps  = math.floor(profit_r)
         new_sl := math.min(new_sl, ep - (steps - 1) * t_risk_short)
     t_sl_short := new_sl
 
@@ -295,17 +303,17 @@ if strategy.position_size < 0 and not na(t_sl_short) and not na(t_tp_short)
 
 if pos_closed_long and not is_entering_long
     t_entry_long := na
-    t_sl_long := na
-    t_tp_long := na
-    t_risk_long := na
-    sid_long := na
+    t_sl_long    := na
+    t_tp_long    := na
+    t_risk_long  := na
+    sid_long     := na
 
 if pos_closed_short and not is_entering_short
     t_entry_short := na
-    t_sl_short := na
-    t_tp_short := na
-    t_risk_short := na
-    sid_short := na
+    t_sl_short    := na
+    t_tp_short    := na
+    t_risk_short  := na
+    sid_short     := na
 
 if strategy.closedtrades > nz(strategy.closedtrades[1], 0)
     idx    = strategy.closedtrades - 1

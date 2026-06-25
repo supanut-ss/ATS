@@ -47,7 +47,7 @@ export default function TradeHistoryTable({ history = [], loading }) {
         </Box>
       ) : (
         <TableContainer sx={{ maxHeight: 360 }}>
-          <Table size="small" stickyHeader>
+          <Table size="small" stickyHeader sx={{ minWidth: { xs: 650, lg: '100%' } }}>
             <TableHead>
               <TableRow>
                 {['Ticket', 'Type', 'Lot', 'Price', 'Profit', 'Swap', 'Comment', 'Time'].map(h => (

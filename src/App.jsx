@@ -243,10 +243,16 @@ export default function App() {
               risk={risk}
             />
 
-            {/* 3-column row — always horizontal, equal 360px height */}
-            <Box sx={{ display: 'flex', gap: 2.5, alignItems: 'stretch', minWidth: 0 }}>
-              {/* Account (30%) */}
-              <Box sx={{ flex: '0 0 30%', minWidth: 0 }}>
+            {/* 3-column row — horizontal on desktop, vertical stack on mobile */}
+            <Box sx={{
+              display: 'flex',
+              flexDirection: { xs: 'column', lg: 'row' },
+              gap: 2.5,
+              alignItems: 'stretch',
+              minWidth: 0,
+            }}>
+              {/* Account (30% on desktop, 100% on mobile) */}
+              <Box sx={{ flex: { xs: '1 1 auto', lg: '0 0 30%' }, minWidth: 0 }}>
                 <AccountCard
                   account={account}
                   connected={connected}
@@ -254,12 +260,12 @@ export default function App() {
                   onDisconnect={handleDisconnect}
                 />
               </Box>
-              {/* Trade Panel (30%) */}
-              <Box sx={{ flex: '0 0 30%', minWidth: 0 }}>
+              {/* Trade Panel (30% on desktop, 100% on mobile) */}
+              <Box sx={{ flex: { xs: '1 1 auto', lg: '0 0 30%' }, minWidth: 0 }}>
                 <ManualTradePanel price={price} risk={risk} onRefresh={fetchAll} />
               </Box>
-              {/* Positions Table (40%) */}
-              <Box sx={{ flex: '1 1 0', minWidth: 0 }}>
+              {/* Positions Table (40% on desktop, 100% on mobile) */}
+              <Box sx={{ flex: { xs: '1 1 auto', lg: '1 1 0' }, minWidth: 0 }}>
                 <PositionsTable positions={positions} onRefresh={fetchAll} />
               </Box>
             </Box>

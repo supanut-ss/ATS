@@ -12,8 +12,8 @@ function StatCell({ label, value, sub, color, icon, divider = true }) {
   return (
     <>
       <Box sx={{
-        flex: '1 1 0',
-        minWidth: 0,
+        flex: { xs: '1 1 calc(50% - 12px)', sm: '1 1 calc(25% - 16px)', lg: '1 1 0' },
+        minWidth: { xs: 130, lg: 0 },
         px: 2,
         py: 1.25,
         display: 'flex',
@@ -57,7 +57,15 @@ function StatCell({ label, value, sub, color, icon, divider = true }) {
         </Box>
       </Box>
       {divider && (
-        <Divider orientation="vertical" flexItem sx={{ borderColor: 'rgba(255,255,255,0.05)', my: 0.75 }} />
+        <Divider
+          orientation="vertical"
+          flexItem
+          sx={{
+            borderColor: 'rgba(255,255,255,0.05)',
+            my: 0.75,
+            display: { xs: 'none', lg: 'block' }
+          }}
+        />
       )}
     </>
   );
@@ -72,13 +80,15 @@ export default function QuickOverview({ connected, account, price, positions, ri
   return (
     <Paper sx={{
       display: 'flex',
+      flexWrap: { xs: 'wrap', lg: 'nowrap' },
       alignItems: 'stretch',
       overflow: 'hidden',
       borderColor: 'rgba(255,255,255,0.06)',
-      height: 72,
-      minHeight: 72,
-      maxHeight: 72,
+      height: { xs: 'auto', lg: 72 },
+      minHeight: { xs: 'auto', lg: 72 },
       boxSizing: 'border-box',
+      gap: { xs: 1, lg: 0 },
+      p: { xs: 1, lg: 0 },
     }}>
       <StatCell
         label="สถานะ MT5"

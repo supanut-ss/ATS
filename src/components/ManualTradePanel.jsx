@@ -134,7 +134,10 @@ export default function ManualTradePanel({ price, risk, onRefresh }) {
                 bgcolor: result.ok ? 'rgba(16,185,129,0.06)' : 'rgba(244,63,94,0.06)',
                 border: `1px solid ${result.ok ? 'rgba(16,185,129,0.2)' : 'rgba(244,63,94,0.2)'}`,
                 color: result.ok ? '#10b981' : '#f43f5e',
-                '& .MuiAlert-icon': { mr: 0.75, py: 0, fontSize: 14 },
+                display: 'flex',
+                alignItems: 'center',
+                '& .MuiAlert-icon': { mr: 0.5, p: 0, fontSize: 14, display: 'flex', alignItems: 'center' },
+                '& .MuiAlert-message': { p: 0, display: 'flex', alignItems: 'center' },
               }}
             >
               {result.message}
@@ -146,7 +149,10 @@ export default function ManualTradePanel({ price, risk, onRefresh }) {
                 py: 0.2, px: 1.25, fontSize: '0.68rem', width: '100%',
                 bgcolor: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.15)',
                 color: '#f59e0b',
-                '& .MuiAlert-icon': { mr: 0.75, py: 0, fontSize: 13 },
+                display: 'flex',
+                alignItems: 'center',
+                '& .MuiAlert-icon': { mr: 0.5, p: 0, fontSize: 13, display: 'flex', alignItems: 'center' },
+                '& .MuiAlert-message': { p: 0, display: 'flex', alignItems: 'center' },
               }}
             >
               กำหนด Stop Loss ก่อนเทรด
