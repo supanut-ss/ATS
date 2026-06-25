@@ -20,7 +20,7 @@ import {
 } from '@mui/icons-material';
 
 import AccountCard       from './components/AccountCard';
-import PriceDisplay      from './components/PriceDisplay';
+
 import PositionsTable    from './components/PositionsTable';
 import TradeHistoryTable from './components/TradeHistoryTable';
 import ManualTradePanel  from './components/ManualTradePanel';
@@ -74,8 +74,7 @@ const theme = createTheme({
 const DRAWER_WIDTH = 220;
 
 const NAV_ITEMS = [
-  { id: 'dashboard', label: 'ภาพรวม',     icon: <DashboardIcon />, desc: 'บัญชีและสถิติ' },
-  { id: 'trade',     label: 'เทรด',       icon: <PositionsIcon />, desc: 'เปิด/ปิดออเดอร์' },
+  { id: 'dashboard', label: 'ภาพรวม & เทรด', icon: <DashboardIcon />, desc: 'บัญชี สถิติ และการส่งคำสั่ง' },
   { id: 'signals',   label: 'สัญญาณ',     icon: <Toll />,        desc: 'ผลลัพธ์สัญญาณ' },
   { id: 'history',   label: 'ประวัติ',    icon: <HistoryIcon />, desc: 'ประวัติการเทรด' },
   { id: 'settings',  label: 'คู่มือตั้งค่า', icon: <Webhook />, desc: 'Webhook & MT5' },
@@ -98,8 +97,8 @@ export default function App() {
 
   const connected = status?.mt5_connected || false;
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
+  const fetchAll = useCallback(async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
     try {
       const [s, a, p, pos, h, r, sigs] = await Promise.all([
         getStatus(), getAccount(), getPrice(),
@@ -115,13 +114,13 @@ export default function App() {
       if (sigs.ok) setSignals(Array.isArray(sigs.data) ? sigs.data : []);
       setLastRefresh(new Date());
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchAll();
-    const id = setInterval(fetchAll, 5000);
+    fetchAll(false);
+    const id = setInterval(() => fetchAll(true), 5000);
     return () => clearInterval(id);
   }, [fetchAll]);
 
@@ -175,7 +174,7 @@ export default function App() {
               }}
             >
               <ListItemIcon sx={{ minWidth: 36, color: 'text.secondary' }}>
-                {item.id === 'trade'
+                {item.id === 'dashboard'
                   ? <Badge badgeContent={positions.length || null} color="primary" max={9}>
                       {item.icon}
                     </Badge>
@@ -234,44 +233,37 @@ export default function App() {
     switch (page) {
       case 'dashboard':
         return (
-          <Grid container spacing={3}>
-            <Grid item xs={12}>
-              <QuickOverview
-                connected={connected}
-                account={account}
-                price={price}
-                positions={positions}
-                risk={risk}
-                loading={loading}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <AccountCard
-                account={account}
-                connected={connected}
-                onConnect={handleConnect}
-                onDisconnect={handleDisconnect}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <PriceDisplay price={price} loading={!price && loading} compact />
-            </Grid>
-          </Grid>
-        );
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+            {/* Stats strip — fixed 72px */}
+            <QuickOverview
+              connected={connected}
+              account={account}
+              price={price}
+              positions={positions}
+              risk={risk}
+            />
 
-      case 'trade':
-        return (
-          <Grid container spacing={3}>
-            <Grid item xs={12}>
-              <PriceDisplay price={price} loading={!price && loading} />
-            </Grid>
-            <Grid item xs={12} md={7}>
-              <PositionsTable positions={positions} loading={!positions && loading} onRefresh={fetchAll} />
-            </Grid>
-            <Grid item xs={12} md={5}>
-              <ManualTradePanel price={price} risk={risk} onRefresh={fetchAll} />
-            </Grid>
-          </Grid>
+            {/* 3-column row — always horizontal, equal 360px height */}
+            <Box sx={{ display: 'flex', gap: 2.5, alignItems: 'stretch', minWidth: 0 }}>
+              {/* Account (30%) */}
+              <Box sx={{ flex: '0 0 30%', minWidth: 0 }}>
+                <AccountCard
+                  account={account}
+                  connected={connected}
+                  onConnect={handleConnect}
+                  onDisconnect={handleDisconnect}
+                />
+              </Box>
+              {/* Trade Panel (30%) */}
+              <Box sx={{ flex: '0 0 30%', minWidth: 0 }}>
+                <ManualTradePanel price={price} risk={risk} onRefresh={fetchAll} />
+              </Box>
+              {/* Positions Table (40%) */}
+              <Box sx={{ flex: '1 1 0', minWidth: 0 }}>
+                <PositionsTable positions={positions} onRefresh={fetchAll} />
+              </Box>
+            </Box>
+          </Box>
         );
 
       case 'signals':

@@ -13,7 +13,7 @@
 
 //--- Input Parameters
 input group "🔗 Connection Settings"
-input string   InpBackendURL = "http://localhost:5000";               // Backend API URL
+input string   InpBackendURL = "https://ats.thaipesleague.com";               // Backend API URL
 input string   InpAuthToken  = "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f";    // Auth Token
 input int      InpPollInterval = 1000;                               // Polling Interval (ms)
 
@@ -60,20 +60,88 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
+//| Get current MT5 state as JSON                                    |
+//+------------------------------------------------------------------+
+string GetMT5StateJson()
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double free_margin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+   double bid = SymbolInfoDouble(Symbol(), SYMBOL_BID);
+   double ask = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
+   
+   string positions_json = "[";
+   int total = PositionsTotal();
+   int count = 0;
+   
+   for(int i = 0; i < total; i++)
+   {
+      // Select position by index for MT5
+      if(PositionGetSymbol(i) != "")
+      {
+         ulong ticket = PositionGetInteger(POSITION_TICKET);
+         string sym = PositionGetString(POSITION_SYMBOL);
+         long type = PositionGetInteger(POSITION_TYPE);
+         double vol = PositionGetDouble(POSITION_VOLUME);
+         double open_pr = PositionGetDouble(POSITION_PRICE_OPEN);
+         double curr_pr = PositionGetDouble(POSITION_PRICE_CURRENT);
+         double sl = PositionGetDouble(POSITION_SL);
+         double tp = PositionGetDouble(POSITION_TP);
+         double profit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP); // include swap
+         
+         string pos_type = (type == POSITION_TYPE_BUY) ? "BUY" : "SELL";
+         
+         if(count > 0) positions_json += ",";
+         
+         positions_json += StringFormat(
+            "{\"ticket\":\"%s\",\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%s,\"open_price\":%s,\"current_price\":%s,\"sl\":%s,\"tp\":%s,\"profit\":%s}",
+            IntegerToString(ticket), sym, pos_type,
+            DoubleToString(vol, 2),
+            DoubleToString(open_pr, 5),
+            DoubleToString(curr_pr, 5),
+            DoubleToString(sl, 5),
+            DoubleToString(tp, 5),
+            DoubleToString(profit, 2)
+         );
+         count++;
+      }
+   }
+   positions_json += "]";
+   
+   string json = StringFormat(
+      "{\"token\":\"%s\",\"balance\":%s,\"equity\":%s,\"free_margin\":%s,\"bid\":%s,\"ask\":%s,\"positions\":%s}",
+      auth_token,
+      DoubleToString(balance, 2),
+      DoubleToString(equity, 2),
+      DoubleToString(free_margin, 2),
+      DoubleToString(bid, 5),
+      DoubleToString(ask, 5),
+      positions_json
+   );
+   
+   return json;
+}
+
+//+------------------------------------------------------------------+
 //| Timer event function - Poll backend for pending signals          |
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-   string url = backend_url + "/api/signals/pending?token=" + auth_token;
+   string url = backend_url + "/api/signals/pending";
    string headers = "Content-Type: application/json\r\n";
+   
+   string payload = GetMT5StateJson();
+   
    char post_data[];
+   StringToCharArray(payload, post_data, 0, StringLen(payload), CP_UTF8);
+   
    char result_data[];
    string result_headers;
    
    ResetLastError();
    
    // Call API
-   int http_code = WebRequest("GET", url, NULL, 3000, post_data, result_data, result_headers);
+   int http_code = WebRequest("POST", url, headers, 3000, post_data, result_data, result_headers);
    
    if(http_code == -1)
    {
@@ -232,6 +300,7 @@ void ExecuteBuy(string id, string symbol, double lot, double sl, double tp)
    else
    {
       Print("ATS EA ERROR: BUY execution failed: ", trade.ResultRetcodeDescription());
+      UpdateSignalStatus(id, "FAILED", 0, 0.0, 0.0, 0.0);
    }
 }
 
@@ -265,6 +334,7 @@ void ExecuteSell(string id, string symbol, double lot, double sl, double tp)
    else
    {
       Print("ATS EA ERROR: SELL execution failed: ", trade.ResultRetcodeDescription());
+      UpdateSignalStatus(id, "FAILED", 0, 0.0, 0.0, 0.0);
    }
 }
 
@@ -289,7 +359,29 @@ void ExecuteClose(string id, string symbol, ulong ticket)
    {
       if(trade.PositionClose(ticket))
       {
-         double profit = trade.ResultProfit();
+         double profit = 0.0;
+         ulong deal_ticket = trade.ResultDeal();
+         if(deal_ticket > 0 && HistoryDealSelect(deal_ticket))
+         {
+            profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+         }
+         else
+         {
+            // Fallback: search history by position ID
+            if(HistorySelectByPosition(ticket))
+            {
+               int total_deals = HistoryDealsTotal();
+               for(int i = total_deals - 1; i >= 0; i--)
+               {
+                  ulong d_ticket = HistoryDealGetTicket(i);
+                  if(HistoryDealGetInteger(d_ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT)
+                  {
+                     profit = HistoryDealGetDouble(d_ticket, DEAL_PROFIT);
+                     break;
+                  }
+               }
+            }
+         }
          double close_price = trade.ResultPrice();
          string result_status = profit >= 0 ? "WIN" : "LOSS";
          
@@ -299,6 +391,7 @@ void ExecuteClose(string id, string symbol, ulong ticket)
       else
       {
          Print("ATS EA ERROR: Close execution failed: ", trade.ResultRetcodeDescription());
+         UpdateSignalStatus(id, "CLOSE_FAILED", 0, 0.0, 0.0, 0.0);
       }
    }
    else
@@ -319,15 +412,18 @@ void UpdateSignalStatus(string id, string status, ulong ticket, double entry_pri
    
    // Format parameters
    string payload = StringFormat(
-      "{\"token\":\"%s\",\"id\":\"%s\",\"status\":\"%s\",\"ticket\":\"%d\",\"entry_price\":%s,\"exit_price\":%s,\"profit\":%s}",
-      auth_token, id, status, ticket, 
+      "{\"token\":\"%s\",\"id\":\"%s\",\"status\":\"%s\",\"ticket\":\"%s\",\"entry_price\":%s,\"exit_price\":%s,\"profit\":%s}",
+      auth_token, id, status, IntegerToString(ticket), 
       DoubleToString(entry_price, 2), 
       DoubleToString(exit_price, 2), 
       DoubleToString(profit, 2)
    );
    
+   Print("ATS EA Debug: Sending POST to ", url);
+   Print("ATS EA Debug: Payload: ", payload);
+   
    char post_data[];
-   StringToCharArray(payload, post_data, 0, WHOLE_ARRAY, CP_UTF8);
+   StringToCharArray(payload, post_data, 0, StringLen(payload), CP_UTF8);
    
    char result_data[];
    string result_headers;

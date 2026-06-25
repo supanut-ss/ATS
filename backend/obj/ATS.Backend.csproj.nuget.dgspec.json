@@ -1,28 +1,26 @@
 {
   "format": 1,
   "restore": {
-    "D:\\GitSource\\ATS\\backend\\ATS.Backend.csproj": {}
+    "D:\\Git\\ATS\\backend\\ATS.Backend.csproj": {}
   },
   "projects": {
-    "D:\\GitSource\\ATS\\backend\\ATS.Backend.csproj": {
+    "D:\\Git\\ATS\\backend\\ATS.Backend.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\GitSource\\ATS\\backend\\ATS.Backend.csproj",
+        "projectUniqueName": "D:\\Git\\ATS\\backend\\ATS.Backend.csproj",
         "projectName": "ATS.Backend",
-        "projectPath": "D:\\GitSource\\ATS\\backend\\ATS.Backend.csproj",
-        "packagesPath": "C:\\Users\\supanut.s\\.nuget\\packages\\",
-        "outputPath": "D:\\GitSource\\ATS\\backend\\obj\\",
+        "projectPath": "D:\\Git\\ATS\\backend\\ATS.Backend.csproj",
+        "packagesPath": "C:\\Users\\CZ\\.nuget\\packages\\",
+        "outputPath": "D:\\Git\\ATS\\backend\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages",
-          "C:\\Program Files (x86)\\Microsoft\\Xamarin\\NuGet\\",
           "C:\\Program Files\\dotnet\\sdk\\NuGetFallbackFolder"
         ],
         "configFilePaths": [
-          "C:\\Users\\supanut.s\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Users\\CZ\\AppData\\Roaming\\NuGet\\NuGet.Config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
-          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config",
-          "C:\\Program Files (x86)\\NuGet\\Config\\Xamarin.Offline.config"
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
           "net10.0"
@@ -59,6 +57,10 @@
             "Microsoft.AspNetCore.OpenApi": {
               "target": "Package",
               "version": "[10.0.9, )"
+            },
+            "MySqlConnector": {
+              "target": "Package",
+              "version": "[2.4.0, )"
             }
           },
           "imports": [
@@ -72,6 +74,20 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Runtime.win-x86",
+              "version": "[10.0.9, 10.0.9]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Runtime.win-x86",
+              "version": "[10.0.9, 10.0.9]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x86",
+              "version": "[10.0.9, 10.0.9]"
+            }
+          ],
           "frameworkReferences": {
             "Microsoft.AspNetCore.App": {
               "privateAssets": "none"
@@ -495,6 +511,11 @@
             "System.Xml.XPath": "(,4.3.32767]",
             "System.Xml.XPath.XDocument": "(,5.0.32767]"
           }
+        }
+      },
+      "runtimes": {
+        "win-x86": {
+          "#import": []
         }
       }
     }
