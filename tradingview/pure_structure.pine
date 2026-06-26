@@ -1,6 +1,6 @@
 //@version=6
 strategy(
-     title               = "Pure Structure + EMA 200 v6 [Fixed]",
+     title               = "Pure Structure + EMA 200 v6 [Hybrid Trailing]",
      overlay             = true,
      initial_capital     = 10000,
      default_qty_type    = strategy.fixed,
@@ -15,31 +15,33 @@ strategy(
 // 1. Inputs
 // ==========================================
 pivot_length     = input.int(3, title="Pivot Lookback Length", minval=1)
-rr_ratio         = input.float(1.5, title="Risk/Reward Ratio (ตามเทรนด์)")
+rr_ratio         = input.float(2.0, title="Risk/Reward Ratio (ตามเทรนด์)")
 rr_ratio_counter = input.float(1.0, title="Risk/Reward Ratio (สวนเทรนด์)", tooltip="R:R สำหรับไม้ที่สวนเทรนด์หลัก H1 & H4")
-sl_buffer        = input.float(1.5, title="เผื่อระยะ SL (ดอลลาร์)")
-max_sl           = input.float(13.0, title="Max SL (USD)", tooltip="ระยะ SL สูงสุดไม่เกิน X USD ต่อไม้")
+sl_buffer        = input.float(1.0, title="เผื่อระยะ SL (ดอลลาร์)")
+max_sl           = input.float(20.0, title="Max SL (USD)", tooltip="ระยะ SL สูงสุดไม่เกิน X USD ต่อไม้")
 pd_threshold     = input.float(0.618, title="Premium/Discount Fib Threshold", minval=0.1, maxval=0.75, step=0.05,
      tooltip="ระดับที่ราคาต้องย่อตัวเข้ามาเพื่อเข้าออเดอร์ (0.618 = Fib golden ratio)")
 
 // --- Risk Management ---
 grp_risk    = "🛡 Risk Management"
 risk_mode   = input.string("Fixed Cash", title="Position Sizing Mode", options=["Fixed Contracts", "Fixed Cash", "Percent of Equity"], group=grp_risk)
-risk_amount = input.float(10.0, title="Risk Amount (USD or %)", minval=0.01, group=grp_risk)
+risk_amount = input.float(12.0, title="Risk Amount (USD or %)", minval=0.01, group=grp_risk)
 fixed_qty   = input.float(1.0, title="Fixed Contracts Quantity", minval=0.01, group=grp_risk)
 
 // --- BE & Trailing Stop ---
-use_be     = input.bool(true, title="เปิดใช้งาน Breakeven")
-be_trigger = input.float(1.2, title="Breakeven Trigger (R)", minval=0.5, step=0.1)
-use_trail  = input.bool(false, title="เปิดใช้งาน Trailing Stop (ขยับ SL ตาม 1R)")
+grp_trail  = "🔒 Trailing Stop"
+use_be     = input.bool(true, title="เปิดใช้งาน Breakeven (กันทุน)", group=grp_trail)
+be_trigger = input.float(1.0, title="Breakeven Trigger (R)", minval=0.5, step=0.1, group=grp_trail, tooltip="ระยะ R ที่จะเริ่มเลื่อน SL มาบังหน้าทุน")
+use_trail  = input.bool(true, title="เปิดใช้งาน Smooth Trailing Stop", group=grp_trail)
+trail_dist = input.float(1.0, title="ระยะ Smooth Trailing (หน่วย R)", step=0.1, group=grp_trail, tooltip="ระยะห่างที่ SL จะวิ่งตามราคาสูงสุด/ต่ำสุดแบบต่อเนื่อง")
 
 // --- Trend Filters ---
 grp_trend            = "📈 Trend Filters"
-use_ema              = input.bool(false, title="เปิดใช้งานตัวกรอง EMA 200 (M5)", group=grp_trend)
+use_ema              = input.bool(true, title="เปิดใช้งานตัวกรอง EMA 200 (M5)", group=grp_trend)
 ema_length           = input.int(200, title="M5 EMA Length", group=grp_trend)
 use_h1_trend         = input.bool(true, title="เปิดใช้งานเทรนด์ H1", group=grp_trend)
 h1_ema_len           = input.int(21, title="H1 EMA Length", minval=5, group=grp_trend)
-use_h4_trend         = input.bool(true, title="เปิดใช้งานเทรนด์ H4", group=grp_trend)
+use_h4_trend         = input.bool(false, title="เปิดใช้งานเทรนด์ H4", group=grp_trend)
 h4_ema_len           = input.int(21, title="H4 EMA Length", minval=5, group=grp_trend)
 filter_counter_trend = input.bool(false, title="บล็อกไม้สวนเทรนด์ทั้งหมด (ไม่เปิดไม้)", group=grp_trend,
      tooltip="หากเปิดใช้: จะห้ามออกไม้สวนเทรนด์เลย (เหมือนเดิม) / หากปิดใช้: สวนเทรนด์ได้แต่เก็บ TP สั้นลง")
@@ -74,7 +76,11 @@ h4_close = request.security(syminfo.tickerid, "240", close[1],                  
 h4_bull  = h4_close > h4_ema
 h4_bear  = h4_close < h4_ema
 
-// HTF Trend confirmation
+// [FIXED] ลอจิกตรวจสอบสถานะสวนเทรนด์อย่างแท้จริง
+is_counter_long  = (use_h1_trend and h1_bear) or (use_h4_trend and h4_bear)
+is_counter_short = (use_h1_trend and h1_bull) or (use_h4_trend and h4_bull)
+
+// [FIXED] เพื่อให้ตัวกรองการเปิดไม้ (Trend Filters) ทำงานได้ถูกต้อง
 htf_bull = (not use_h1_trend or h1_bull) and (not use_h4_trend or h4_bull)
 htf_bear = (not use_h1_trend or h1_bear) and (not use_h4_trend or h4_bear)
 
@@ -84,12 +90,12 @@ htf_bear = (not use_h1_trend or h1_bear) and (not use_h4_trend or h4_bear)
 ph = ta.pivothigh(high, pivot_length, pivot_length)
 pl = ta.pivotlow(low, pivot_length, pivot_length)
 
-var float  last_ph       = na
-var float  last_pl       = na
-var float  prev_ph       = na
-var float  prev_pl       = na
-var int    last_ph_bar   = na
-var int    last_pl_bar   = na
+var float  last_ph        = na
+var float  last_pl        = na
+var float  prev_ph        = na
+var float  prev_pl        = na
+var int    last_ph_bar    = na
+var int    last_pl_bar    = na
 var int    last_pivot_bar   = na
 var float  last_pivot_price = na
 var string last_pivot_type  = na
@@ -177,8 +183,6 @@ var bool touched_premium  = false
 if trend == 1 and low <= discount_level
     touched_discount := true
 
-// Reset เฉพาะเมื่อ: เทรนด์เปลี่ยน หรือ มีไม้อยู่แล้ว
-// ไม่ใช้ midpoint reset เพราะ close มักสูงกว่า midpoint อยู่แล้วในแท่งที่แตะโซน
 if trend != 1 or strategy.position_size > 0
     touched_discount := false
 
@@ -188,7 +192,7 @@ if trend == -1 and high >= premium_level
 if trend != -1 or strategy.position_size > 0
     touched_premium := false
 
-// PA Confirmation — ผ่อนปรน: แค่แท่งสลับสี
+// PA Confirmation
 bullish_pa = close[1] < open[1] and close > open
 bearish_pa = close[1] > open[1] and close < open
 
@@ -235,9 +239,9 @@ f_calc_qty(risk_dist) =>
     qty := math.max(0.01, math.round(qty, 2))
     qty
 
-// Determine dynamic RR ratio for this trade
-active_rr_long  = htf_bear ? rr_ratio_counter : rr_ratio
-active_rr_short = htf_bull ? rr_ratio_counter : rr_ratio
+// [FIXED] กำหนด R:R ให้ตรงกับความเป็นจริง ไม่ผิดเพี้ยนเวลาปิด Filter H1
+active_rr_long  = is_counter_long ? rr_ratio_counter : rr_ratio
+active_rr_short = is_counter_short ? rr_ratio_counter : rr_ratio
 
 if longCondition
     sl_price = swing_low - sl_buffer
@@ -271,27 +275,39 @@ if shortCondition
         is_entering_short := true
         alert(f_open("SELL", close, sl_price, tp_price, s, q, active_rr_short), alert.freq_once_per_bar_close)
 
-// ── BE & Trailing Stop ──
+// ── [FIXED] Hybrid BE & Smooth Trailing Stop ──
 if strategy.position_size > 0 and not na(t_risk_long) and t_risk_long > 0
     ep       = strategy.position_avg_price
-    profit_r = (close - ep) / t_risk_long
+    // ใช้ high จับกำไรสูงสุดระหว่างแท่งเทียน
+    profit_r = (high - ep) / t_risk_long 
     new_sl   = t_sl_long
+    
+    // 1. ล็อคหน้าทุน (Breakeven)
     if use_be and profit_r >= be_trigger
         new_sl := math.max(new_sl, ep)
-    if use_trail and profit_r >= 1.0
-        steps  = math.floor(profit_r)
-        new_sl := math.max(new_sl, ep + (steps - 1) * t_risk_long)
+        
+    // 2. Smooth Trailing
+    if use_trail and profit_r >= be_trigger
+        smooth_sl = high - (trail_dist * t_risk_long)
+        new_sl := math.max(new_sl, smooth_sl)
+        
     t_sl_long := new_sl
 
 if strategy.position_size < 0 and not na(t_risk_short) and t_risk_short > 0
     ep       = strategy.position_avg_price
-    profit_r = (ep - close) / t_risk_short
+    // ใช้ low จับกำไรสูงสุดระหว่างแท่งเทียน
+    profit_r = (ep - low) / t_risk_short 
     new_sl   = t_sl_short
+    
+    // 1. ล็อคหน้าทุน (Breakeven)
     if use_be and profit_r >= be_trigger
         new_sl := math.min(new_sl, ep)
-    if use_trail and profit_r >= 1.0
-        steps  = math.floor(profit_r)
-        new_sl := math.min(new_sl, ep - (steps - 1) * t_risk_short)
+        
+    // 2. Smooth Trailing
+    if use_trail and profit_r >= be_trigger
+        smooth_sl = low + (trail_dist * t_risk_short)
+        new_sl := math.min(new_sl, smooth_sl)
+        
     t_sl_short := new_sl
 
 // ── Exits ──

@@ -267,6 +267,35 @@ app.MapPost("/api/signals/update", async ([FromBody] SignalUpdatePayload payload
     return Results.Ok(new { ok = true, message = $"Signal updated to {signal.Status}" });
 });
 
+// ─── POST /api/signals/local — EA reports a local open/close trade ────
+app.MapPost("/api/signals/local", async ([FromBody] LocalTradePayload payload) =>
+{
+    if (payload.Token != webhookSecret)
+        return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
+
+    var signal = await db.GetSignalByIdAsync(payload.Id) ?? new Signal();
+    
+    signal.Id         = payload.Id;
+    signal.SignalId   = payload.Id;
+    if (signal.Timestamp == default) signal.Timestamp = DateTime.UtcNow;
+    if (!string.IsNullOrWhiteSpace(payload.Action)) signal.Action = payload.Action.ToUpper();
+    if (!string.IsNullOrWhiteSpace(payload.Symbol)) signal.Symbol = payload.Symbol;
+    if (payload.Volume > 0)    signal.Volume     = payload.Volume;
+    if (payload.EntryPrice > 0) signal.EntryPrice = payload.EntryPrice;
+    if (payload.Sl > 0)        signal.Sl         = payload.Sl;
+    if (payload.Tp > 0)        signal.Tp         = payload.Tp;
+    if (!string.IsNullOrWhiteSpace(payload.Status)) signal.Status = payload.Status.ToUpper();
+    if (!string.IsNullOrWhiteSpace(payload.Ticket)) signal.Ticket = payload.Ticket;
+    if (payload.ExitPrice > 0) signal.ExitPrice  = payload.ExitPrice;
+    if (payload.Profit != 0)   signal.Profit     = payload.Profit;
+
+    await db.UpsertSignalAsync(signal);
+    await db.AddLogAsync($"LOCAL_{signal.Status}", JsonSerializer.Serialize(payload),
+                          JsonSerializer.Serialize(new { ok = true, message = $"Local signal upserted as {signal.Status}" }));
+
+    return Results.Ok(new { ok = true, message = $"Local signal upserted as {signal.Status}" });
+});
+
 // ─── POST /api/signals/clear ──────────────────────────────────────────
 app.MapPost("/api/signals/clear", async () =>
 {
@@ -959,4 +988,20 @@ public class HeartbeatPosition
     [JsonPropertyName("sl")]            public double Sl           { get; set; }
     [JsonPropertyName("tp")]            public double Tp           { get; set; }
     [JsonPropertyName("profit")]        public double Profit       { get; set; }
+}
+
+public class LocalTradePayload
+{
+    [JsonPropertyName("token")]       public string Token { get; set; } = string.Empty;
+    [JsonPropertyName("id")]          public string Id { get; set; } = string.Empty;
+    [JsonPropertyName("action")]      public string Action { get; set; } = string.Empty;
+    [JsonPropertyName("symbol")]      public string Symbol { get; set; } = string.Empty;
+    [JsonPropertyName("volume")]      public double Volume { get; set; }
+    [JsonPropertyName("entry_price")] public double EntryPrice { get; set; }
+    [JsonPropertyName("sl")]          public double Sl { get; set; }
+    [JsonPropertyName("tp")]          public double Tp { get; set; }
+    [JsonPropertyName("status")]      public string Status { get; set; } = string.Empty;
+    [JsonPropertyName("ticket")]      public string Ticket { get; set; } = string.Empty;
+    [JsonPropertyName("exit_price")]  public double ExitPrice { get; set; }
+    [JsonPropertyName("profit")]      public double Profit { get; set; }
 }

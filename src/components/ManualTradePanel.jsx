@@ -143,20 +143,18 @@ export default function ManualTradePanel({ price, risk, onRefresh }) {
               {result.message}
             </Alert>
           ) : !sl ? (
-            <Alert
-              severity="warning" icon={<Warning sx={{ fontSize: 13 }} />}
+            <Box
               sx={{
-                py: 0.2, px: 1.25, fontSize: '0.68rem', width: '100%',
+                py: 0.4, px: 1.25, fontSize: '0.68rem', width: '100%',
                 bgcolor: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.15)',
-                color: '#f59e0b',
-                display: 'flex',
-                alignItems: 'center',
-                '& .MuiAlert-icon': { mr: 0.5, p: 0, fontSize: 13, display: 'flex', alignItems: 'center' },
-                '& .MuiAlert-message': { p: 0, display: 'flex', alignItems: 'center' },
+                color: '#f59e0b', borderRadius: 1.5,
+                display: 'flex', alignItems: 'center', gap: 0.75,
+                whiteSpace: 'nowrap'
               }}
             >
-              กำหนด Stop Loss ก่อนเทรด
-            </Alert>
+              <Warning sx={{ fontSize: 14 }} />
+              <span>กำหนด Stop Loss ก่อนเทรด</span>
+            </Box>
           ) : null}
         </Box>
 
