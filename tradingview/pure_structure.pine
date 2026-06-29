@@ -18,7 +18,7 @@ pivot_length     = input.int(3, title="Pivot Lookback Length", minval=1)
 rr_ratio         = input.float(2.0, title="Risk/Reward Ratio (ตามเทรนด์)")
 rr_ratio_counter = input.float(1.0, title="Risk/Reward Ratio (สวนเทรนด์)", tooltip="R:R สำหรับไม้ที่สวนเทรนด์หลัก H1 & H4")
 sl_buffer        = input.float(1.0, title="เผื่อระยะ SL (ดอลลาร์)")
-max_sl           = input.float(20.0, title="Max SL (USD)", tooltip="ระยะ SL สูงสุดไม่เกิน X USD ต่อไม้")
+max_sl_pips      = input.int(1000, title="Max SL (Pips/Points)", tooltip="ระยะ SL สูงสุดไม่เกิน X pip/จุด (ทองคำ: 1000 = 10.0 USD) หากเกินจะตั้งที่ค่านี้")
 pd_threshold     = input.float(0.618, title="Premium/Discount Fib Threshold", minval=0.1, maxval=0.75, step=0.05,
      tooltip="ระดับที่ราคาต้องย่อตัวเข้ามาเพื่อเข้าออเดอร์ (0.618 = Fib golden ratio)")
 
@@ -28,12 +28,10 @@ risk_mode   = input.string("Fixed Cash", title="Position Sizing Mode", options=[
 risk_amount = input.float(12.0, title="Risk Amount (USD or %)", minval=0.01, group=grp_risk)
 fixed_qty   = input.float(1.0, title="Fixed Contracts Quantity", minval=0.01, group=grp_risk)
 
-// --- BE & Trailing Stop ---
+// --- Trailing Stop ---
 grp_trail  = "🔒 Trailing Stop"
-use_be     = input.bool(true, title="เปิดใช้งาน Breakeven (กันทุน)", group=grp_trail)
-be_trigger = input.float(1.0, title="Breakeven Trigger (R)", minval=0.5, step=0.1, group=grp_trail, tooltip="ระยะ R ที่จะเริ่มเลื่อน SL มาบังหน้าทุน")
-use_trail  = input.bool(true, title="เปิดใช้งาน Smooth Trailing Stop", group=grp_trail)
-trail_dist = input.float(1.0, title="ระยะ Smooth Trailing (หน่วย R)", step=0.1, group=grp_trail, tooltip="ระยะห่างที่ SL จะวิ่งตามราคาสูงสุด/ต่ำสุดแบบต่อเนื่อง")
+use_trail  = input.bool(true, title="เปิดใช้งาน Trailing Stop (Step)", group=grp_trail)
+trail_step = input.int(500, title="Trailing Step (Pips/Points)", group=grp_trail, tooltip="ระยะขยับของ SL ทุกๆ X pip/จุด (ทองคำ: 500 = 5.0 USD)")
 
 // --- Trend Filters ---
 grp_trend            = "📈 Trend Filters"
@@ -246,7 +244,12 @@ active_rr_short = is_counter_short ? rr_ratio_counter : rr_ratio
 if longCondition
     sl_price = swing_low - sl_buffer
     risk     = close - sl_price
-    if risk > 0 and risk <= max_sl
+    max_sl_val = max_sl_pips * syminfo.mintick
+    if risk > max_sl_val
+        risk     := max_sl_val
+        sl_price := close - max_sl_val
+        
+    if risk > 0
         tp_price         = close + (risk * active_rr_long)
         q                = f_calc_qty(risk)
         strategy.entry("Buy", strategy.long, qty=q)
@@ -262,7 +265,12 @@ if longCondition
 if shortCondition
     sl_price = swing_high + sl_buffer
     risk     = sl_price - close
-    if risk > 0 and risk <= max_sl
+    max_sl_val = max_sl_pips * syminfo.mintick
+    if risk > max_sl_val
+        risk     := max_sl_val
+        sl_price := close + max_sl_val
+        
+    if risk > 0
         tp_price          = close - (risk * active_rr_short)
         q                 = f_calc_qty(risk)
         strategy.entry("Sell", strategy.short, qty=q)
@@ -275,39 +283,45 @@ if shortCondition
         is_entering_short := true
         alert(f_open("SELL", close, sl_price, tp_price, s, q, active_rr_short), alert.freq_once_per_bar_close)
 
-// ── [FIXED] Hybrid BE & Smooth Trailing Stop ──
-if strategy.position_size > 0 and not na(t_risk_long) and t_risk_long > 0
-    ep       = strategy.position_avg_price
-    // ใช้ high จับกำไรสูงสุดระหว่างแท่งเทียน
-    profit_r = (high - ep) / t_risk_long 
-    new_sl   = t_sl_long
+// ── Step-based Trailing Stop ──
+var float max_price = na
+var float min_price = na
+
+if strategy.position_size == 0
+    max_price := na
+    min_price := na
+
+if strategy.position_size > 0 and use_trail
+    max_price := na(max_price) ? high : math.max(max_price, high)
+    ep   = strategy.position_avg_price
+    step = trail_step * syminfo.mintick
     
-    // 1. ล็อคหน้าทุน (Breakeven)
-    if use_be and profit_r >= be_trigger
-        new_sl := math.max(new_sl, ep)
-        
-    // 2. Smooth Trailing
-    if use_trail and profit_r >= be_trigger
-        smooth_sl = high - (trail_dist * t_risk_long)
-        new_sl := math.max(new_sl, smooth_sl)
+    profit = max_price - ep
+    n_steps = math.floor(profit / step)
+    
+    new_sl = t_sl_long
+    if n_steps >= 1
+        calculated_sl = ep + (n_steps - 1) * step
+        new_sl := math.max(nz(new_sl, calculated_sl), calculated_sl)
         
     t_sl_long := new_sl
 
-if strategy.position_size < 0 and not na(t_risk_short) and t_risk_short > 0
-    ep       = strategy.position_avg_price
-    // ใช้ low จับกำไรสูงสุดระหว่างแท่งเทียน
-    profit_r = (ep - low) / t_risk_short 
-    new_sl   = t_sl_short
+if strategy.position_size < 0 and use_trail
+    min_price := na(min_price) ? low : math.min(min_price, low)
+    ep   = strategy.position_avg_price
+    step = trail_step * syminfo.mintick
     
-    // 1. ล็อคหน้าทุน (Breakeven)
-    if use_be and profit_r >= be_trigger
-        new_sl := math.min(new_sl, ep)
-        
-    // 2. Smooth Trailing
-    if use_trail and profit_r >= be_trigger
-        smooth_sl = low + (trail_dist * t_risk_short)
-        new_sl := math.min(new_sl, smooth_sl)
-        
+    profit = ep - min_price
+    n_steps = math.floor(profit / step)
+    
+    new_sl = t_sl_short
+    if n_steps >= 1
+        calculated_sl = ep - (n_steps - 1) * step
+        if na(new_sl)
+            new_sl := calculated_sl
+        else
+            new_sl := math.min(new_sl, calculated_sl)
+            
     t_sl_short := new_sl
 
 // ── Exits ──

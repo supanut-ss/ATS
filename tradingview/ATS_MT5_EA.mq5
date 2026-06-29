@@ -28,7 +28,7 @@ input int      InpPivotLength          = 3;                          // Pivot Lo
 input double   InpRRRatio              = 2.0;                        // Risk/Reward Ratio (Trend-following)
 input double   InpRRRatioCounter       = 1.0;                        // Risk/Reward Ratio (Counter-trend)
 input double   InpSLBuffer             = 1.0;                        // SL Buffer (USD)
-input double   InpMaxSL                = 20.0;                       // Max SL (USD)
+input int      InpMaxSLPips            = 1000;                       // Max SL (Points/Pips - e.g. 1000 = 10.0 USD for Gold)
 input double   InpPDThreshold          = 0.618;                      // Premium/Discount Fib Threshold (0.618)
 
 enum ENUM_RISK_MODE
@@ -53,10 +53,8 @@ input int      InpH4EMALen             = 21;                         // H4 EMA L
 input bool     InpFilterCounterTrend   = false;                      // Block all Counter-Trend trades
 
 input group "🔄 Breakeven & Trailing Stop"
-input bool     InpUseBE                = true;                       // Enable Breakeven (กันทุน)
-input double   InpBETrigger            = 1.0;                        // Breakeven Trigger (R-multiple)
-input bool     InpUseTrail             = true;                       // Enable Smooth Trailing Stop
-input double   InpTrailDist            = 1.0;                        // Smooth Trailing Distance (R-multiple)
+input bool     InpUseTrail             = true;                       // Enable Trailing Stop (Step)
+input int      InpTrailStep            = 500;                        // Trailing Step (Points/Pips - e.g. 500 = 5.0 USD for Gold)
 
 //--- Global Variables
 CTrade   trade;
@@ -681,17 +679,20 @@ void ExecuteStrategyLogic()
    {
       double sl_price = swing_low - InpSLBuffer;
       double risk = closed_close - sl_price;
-      if(risk > 0.0 && risk <= InpMaxSL)
+      double max_sl_val = InpMaxSLPips * SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+      if(risk > max_sl_val)
+      {
+         risk = max_sl_val;
+         sl_price = closed_close - max_sl_val;
+      }
+      
+      if(risk > 0.0)
       {
          double active_rr = is_counter_long ? InpRRRatioCounter : InpRRRatio;
          double tp_price = closed_close + (risk * active_rr);
          double qty = CalculateQty(risk);
          
          Print("ATS EA: Entry Signal BUY. Close: ", closed_close, " SL: ", sl_price, " TP: ", tp_price, " Lot: ", qty);
-         
-         // Set global persistent variables for risk
-         string gv_long_risk_name = "ATS_RISK_LONG_" + IntegerToString(InpMagic);
-         GlobalVariableSet(gv_long_risk_name, risk);
          
          MqlTick tick;
          if(SymbolInfoTick(Symbol(), tick))
@@ -707,17 +708,20 @@ void ExecuteStrategyLogic()
    {
       double sl_price = swing_high + InpSLBuffer;
       double risk = sl_price - closed_close;
-      if(risk > 0.0 && risk <= InpMaxSL)
+      double max_sl_val = InpMaxSLPips * SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+      if(risk > max_sl_val)
+      {
+         risk = max_sl_val;
+         sl_price = closed_close + max_sl_val;
+      }
+      
+      if(risk > 0.0)
       {
          double active_rr = is_counter_short ? InpRRRatioCounter : InpRRRatio;
          double tp_price = closed_close - (risk * active_rr);
          double qty = CalculateQty(risk);
          
          Print("ATS EA: Entry Signal SELL. Close: ", closed_close, " SL: ", sl_price, " TP: ", tp_price, " Lot: ", qty);
-         
-         // Set global persistent variables for risk
-         string gv_short_risk_name = "ATS_RISK_SHORT_" + IntegerToString(InpMagic);
-         GlobalVariableSet(gv_short_risk_name, risk);
          
          MqlTick tick;
          if(SymbolInfoTick(Symbol(), tick))
@@ -739,11 +743,6 @@ void CheckBEAndTrailing()
    // Cleanup persistent variables if no position is open
    if(GetPositionSize() == 0)
    {
-      string gv_long = "ATS_RISK_LONG_" + IntegerToString(InpMagic);
-      string gv_short = "ATS_RISK_SHORT_" + IntegerToString(InpMagic);
-      if(GlobalVariableCheck(gv_long)) GlobalVariableDel(gv_long);
-      if(GlobalVariableCheck(gv_short)) GlobalVariableDel(gv_short);
-      
       // Cleanup all orphaned max/min peak price variables
       int total_gv = GlobalVariablesTotal();
       for(int k = total_gv - 1; k >= 0; k--)
@@ -756,7 +755,7 @@ void CheckBEAndTrailing()
       }
    }
 
-   if(!InpUseBE && !InpUseTrail) return;
+   if(!InpUseTrail) return;
    
    int total = PositionsTotal();
    for(int i = total - 1; i >= 0; i--)
@@ -768,14 +767,6 @@ void CheckBEAndTrailing()
          double sl = PositionGetDouble(POSITION_SL);
          double tp = PositionGetDouble(POSITION_TP);
          long type = PositionGetInteger(POSITION_TYPE);
-         
-         string gv_risk_name = (type == POSITION_TYPE_BUY) ? 
-            "ATS_RISK_LONG_" + IntegerToString(InpMagic) : 
-            "ATS_RISK_SHORT_" + IntegerToString(InpMagic);
-            
-         if(!GlobalVariableCheck(gv_risk_name)) continue;
-         double initial_risk = GlobalVariableGet(gv_risk_name);
-         if(initial_risk <= 0.0) continue;
          
          double close_price = SymbolInfoDouble(Symbol(), (type == POSITION_TYPE_BUY) ? SYMBOL_BID : SYMBOL_ASK);
          double new_sl = sl;
@@ -791,19 +782,17 @@ void CheckBEAndTrailing()
                GlobalVariableSet(gv_max_price, max_price);
             }
             
-            double profit_r = (max_price - ep) / initial_risk;
-            
-            // 2. Lock Breakeven (กันทุน)
-            if(InpUseBE && profit_r >= InpBETrigger)
+            // 2. Trailing Step Logic
+            double step = InpTrailStep * SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+            double profit = max_price - ep;
+            if(step > 0)
             {
-               new_sl = MathMax(new_sl, ep);
-            }
-            
-            // 3. Smooth Trailing Stop
-            if(InpUseTrail && profit_r >= InpBETrigger)
-            {
-               double smooth_sl = max_price - (InpTrailDist * initial_risk);
-               new_sl = MathMax(new_sl, smooth_sl);
+               int n_steps = (int)MathFloor(profit / step);
+               if(n_steps >= 1)
+               {
+                  double calculated_sl = ep + (n_steps - 1) * step;
+                  new_sl = MathMax(new_sl, calculated_sl);
+               }
             }
             
             if(new_sl > sl)
@@ -823,25 +812,26 @@ void CheckBEAndTrailing()
                GlobalVariableSet(gv_min_price, min_price);
             }
             
-            double profit_r = (ep - min_price) / initial_risk;
-            
-            // 2. Lock Breakeven (กันทุน)
-            if(InpUseBE && profit_r >= InpBETrigger)
+            // 2. Trailing Step Logic
+            double step = InpTrailStep * SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+            double profit = ep - min_price;
+            if(step > 0)
             {
-               new_sl = (sl == 0.0) ? ep : MathMin(sl, ep);
-            }
-            
-            // 3. Smooth Trailing Stop
-            if(InpUseTrail && profit_r >= InpBETrigger)
-            {
-               double smooth_sl = min_price + (InpTrailDist * initial_risk);
-               new_sl = (sl == 0.0) ? smooth_sl : MathMin(sl, smooth_sl);
+               int n_steps = (int)MathFloor(profit / step);
+               if(n_steps >= 1)
+               {
+                  double calculated_sl = ep - (n_steps - 1) * step;
+                  new_sl = (sl == 0.0) ? calculated_sl : MathMin(sl, calculated_sl);
+               }
             }
             
             if(new_sl < sl || sl == 0.0)
             {
-               trade.PositionModify(ticket, new_sl, tp);
-               Print("ATS EA: Modified SL for Sell position #", ticket, " Old SL: ", sl, " New SL: ", new_sl);
+               if(new_sl > 0.0)
+               {
+                  trade.PositionModify(ticket, new_sl, tp);
+                  Print("ATS EA: Modified SL for Sell position #", ticket, " Old SL: ", sl, " New SL: ", new_sl);
+               }
             }
          }
       }
