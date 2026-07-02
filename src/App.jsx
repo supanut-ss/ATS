@@ -27,6 +27,7 @@ import ManualTradePanel  from './components/ManualTradePanel';
 import WebhookGuide      from './components/WebhookGuide';
 import SignalsTracker    from './components/SignalsTracker';
 import QuickOverview     from './components/QuickOverview';
+import WorldCupPredictions from './components/WorldCupPredictions';
 
 import {
   getStatus, getAccount, getPrice,
@@ -81,6 +82,8 @@ const NAV_ITEMS = [
 ];
 
 export default function App() {
+  const isTradeRoute = window.location.pathname === '/trade';
+
   const [page, setPage]             = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -98,6 +101,7 @@ export default function App() {
   const connected = status?.mt5_connected || false;
 
   const fetchAll = useCallback(async (isBackground = false) => {
+    if (!isTradeRoute) return;
     if (!isBackground) setLoading(true);
     try {
       const [s, a, p, pos, h, r, sigs] = await Promise.all([
@@ -116,13 +120,14 @@ export default function App() {
     } finally {
       if (!isBackground) setLoading(false);
     }
-  }, []);
+  }, [isTradeRoute]);
 
   useEffect(() => {
+    if (!isTradeRoute) return;
     fetchAll(false);
     const id = setInterval(() => fetchAll(true), 5000);
     return () => clearInterval(id);
-  }, [fetchAll]);
+  }, [fetchAll, isTradeRoute]);
 
   const handleConnect = async () => {
     const res = await connectMT5();
@@ -285,6 +290,17 @@ export default function App() {
         return null;
     }
   };
+
+  if (!isTradeRoute) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{ p: { xs: 2, sm: 4 }, minHeight: '100vh', bgcolor: 'background.default' }}>
+          <WorldCupPredictions />
+        </Box>
+      </ThemeProvider>
+    );
+  }
 
   return (
     <ThemeProvider theme={theme}>

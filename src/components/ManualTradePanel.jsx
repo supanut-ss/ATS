@@ -162,7 +162,7 @@ export default function ManualTradePanel({ price, risk, onRefresh }) {
         <Box sx={{ display: 'flex', gap: 1.5, justifyContent: 'center' }}>
           <Box sx={{ flex: 1, maxWidth: 200 }}>
             <Button
-              fullWidth variant="contained" disabled={!!loading}
+              fullWidth variant="contained" disabled={!!loading || !sl}
               onClick={() => execute('BUY')}
               startIcon={<TrendingUp sx={{ fontSize: '15px !important' }} />}
               sx={{
@@ -182,7 +182,7 @@ export default function ManualTradePanel({ price, risk, onRefresh }) {
           </Box>
           <Box sx={{ flex: 1, maxWidth: 200 }}>
             <Button
-              fullWidth variant="contained" disabled={!!loading}
+              fullWidth variant="contained" disabled={!!loading || !sl}
               onClick={() => execute('SELL')}
               startIcon={<TrendingDown sx={{ fontSize: '15px !important' }} />}
               sx={{
