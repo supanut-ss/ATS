@@ -540,6 +540,8 @@ app.MapPost("/api/modify/{ticket}", async (string ticket, HttpContext context) =
     return Results.Ok(new { ok = true, message = "SL/TP queued for modification", ticket });
 });
 
+app.MapFallbackToFile("index.html");
+
 app.Run();
 
 // ═══════════════════════════════════════════════════════════════════

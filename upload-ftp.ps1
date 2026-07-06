@@ -126,10 +126,13 @@ function Upload-File {
         $response.Close()
 
         $localSize = (Get-Item $SourceFile).Length
-        $isHtml = $RelativePath.EndsWith(".html", [System.StringComparison]::OrdinalIgnoreCase) -or 
-                  $RelativePath.EndsWith(".htm", [System.StringComparison]::OrdinalIgnoreCase)
+        $shouldAlwaysUpload = $RelativePath.EndsWith(".html", [System.StringComparison]::OrdinalIgnoreCase) -or 
+                              $RelativePath.EndsWith(".htm", [System.StringComparison]::OrdinalIgnoreCase) -or
+                              $RelativePath.EndsWith(".dll", [System.StringComparison]::OrdinalIgnoreCase) -or
+                              $RelativePath.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase) -or
+                              $RelativePath.EndsWith(".json", [System.StringComparison]::OrdinalIgnoreCase)
 
-        if (-not $isHtml -and $remoteSize -eq $localSize) {
+        if (-not $shouldAlwaysUpload -and $remoteSize -eq $localSize) {
             Write-Host "Skipped (Size Match): $RelativePath" -ForegroundColor Gray
             return
         }
