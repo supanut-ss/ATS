@@ -52,6 +52,17 @@ use_h4_trend         = input.bool(false, title="H4 EMA Filter", group=grp_trend)
 h4_ema_len           = input.int(21,     title="H4 EMA Length", minval=5, group=grp_trend)
 filter_counter_trend = input.bool(false, title="Block Counter-Trend trades", group=grp_trend)
 
+// --- News & Volume Filters ---
+grp_news_vol       = "== News & Volume Filters =="
+use_news_filter    = input.bool(true, title="Enable News Filter", group=grp_news_vol, tooltip="งดเข้าไม้ในช่วงเวลาที่มีข่าวสำคัญ")
+news_session       = input.session("1300-1400,1930-2030:23456", title="News Block Session (UTC)", group=grp_news_vol, tooltip="เวลาที่จะงดเข้าเทรด (รูปแบบ hhmm-hhmm:days โดย 2-6 คือ จันทร์-ศุกร์, คั่นด้วยลูกน้ำได้)")
+news_timezone      = input.string("UTC", title="News Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_news_vol)
+
+use_vol_filter     = input.bool(true, title="Enable Volume Spike Filter", group=grp_news_vol, tooltip="งดเข้าไม้เมื่อมีวอลลุ่มเข้าผิดปกติ")
+vol_spike_mult     = input.float(2.0, title="Volume Spike Multiplier", minval=1.1, step=0.1, group=grp_news_vol, tooltip="จำนวนเท่าของ Volume เฉลี่ยที่ถือว่าเป็น Volume Spike")
+vol_sma_len        = input.int(20, title="Volume SMA Length", minval=5, group=grp_news_vol, tooltip="จำนวนแท่งเทียนที่ใช้อ้างอิงหาค่าเฉลี่ย Volume")
+vol_spike_lookback = input.int(3, title="Block Duration (Bars)", minval=1, group=grp_news_vol, tooltip="จำนวนแท่งเทียนที่จะงดเข้าเทรดหลังจากเกิด Volume Spike (1 = เฉพาะแท่งที่เกิด, 3 = แท่งที่เกิด + 2 แท่งถัดไป)")
+
 // -- Webhook --
 grp_wh        = "== Webhook =="
 webhook_token = input.string("ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f", "Auth Token", group=grp_wh)
@@ -314,10 +325,27 @@ else if entry_mode == "FVG/OB Inside Discount/Premium (Strict ICT)"
     zone_bear := (in_bear_fvg or in_bear_ob) and touched_premium
 
 // ==========================================
+// News & Volume Filter Logic
+// ==========================================
+is_news_time = use_news_filter and not na(time(timeframe.period, news_session, news_timezone))
+
+vol_sma = ta.sma(volume, vol_sma_len)
+is_volume_spike = use_vol_filter and not na(volume) and not na(vol_sma) and vol_sma > 0 and volume > (vol_sma * vol_spike_mult)
+is_volume_blocked = false
+if use_vol_filter
+    is_volume_blocked := not na(ta.barssince(is_volume_spike)) and ta.barssince(is_volume_spike) < vol_spike_lookback
+
+filter_blocked = is_news_time or is_volume_blocked
+
+// Visuals for Filters
+bgcolor(is_news_time ? color.new(color.purple, 92) : na, title="News Block Active")
+bgcolor(is_volume_blocked ? color.new(color.orange, 92) : na, title="Volume Spike Block Active")
+
+// ==========================================
 // Final Entry Conditions
 // ==========================================
-longCondition  = (trend == 1)  and zone_bull and bullish_pa and ema_long_cond  and long_trend_ok  and strategy.position_size == 0
-shortCondition = (trend == -1) and zone_bear and bearish_pa and ema_short_cond and short_trend_ok and strategy.position_size == 0
+longCondition  = (trend == 1)  and zone_bull and bullish_pa and ema_long_cond  and long_trend_ok  and not filter_blocked and strategy.position_size == 0
+shortCondition = (trend == -1) and zone_bear and bearish_pa and ema_short_cond and short_trend_ok and not filter_blocked and strategy.position_size == 0
 
 // Debug Background to see if conditions ever trigger
 bgcolor(longCondition ? color.new(color.green, 80) : na, title="Debug Long")

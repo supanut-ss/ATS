@@ -52,6 +52,15 @@ input bool     InpUseH4Trend           = false;
 input int      InpH4EMALen             = 21;
 input bool     InpFilterCounterTrend   = false;
 
+input group "== News & Volume Filters =="
+input bool     InpUseNewsFilter        = true;         // Enable News Filter
+input string   InpNewsSession          = "1300-1400,1930-2030:23456"; // News block session (UTC)
+input string   InpNewsTimezone         = "UTC";        // News Timezone (UTC, America/New_York, Asia/Bangkok, Exchange)
+input bool     InpUseVolFilter         = true;         // Enable Volume Spike Filter
+input double   InpVolSpikeMult         = 2.0;          // Volume Spike Multiplier
+input int      InpVolSmaLen            = 20;           // Volume SMA Length
+input int      InpVolSpikeLookback     = 3;            // Block Duration (Bars)
+
 input group "== Breakeven & Scaled Trailing Stop =="
 input int      InpBEPips               = 500;
 input int      InpTrailLevel1Pips      = 1000;
@@ -243,6 +252,119 @@ bool GetHTFTrend(ENUM_TIMEFRAMES tf, int ema_len, bool &bull, bool &bear)
    return true;
 }
 
+//+------------------------------------------------------------------+
+//| GetTimeInTimezone: Convert UTC time to selected timezone        |
+//+------------------------------------------------------------------+
+datetime GetTimeInTimezone(string timezone)
+{
+   datetime utc_time = TimeGMT();
+   if(timezone == "UTC")
+      return utc_time;
+   if(timezone == "Asia/Bangkok")
+      return utc_time + 7 * 3600;
+   if(timezone == "America/New_York")
+   {
+      MqlDateTime dt;
+      TimeToStruct(utc_time, dt);
+      int offset = (dt.mon >= 3 && dt.mon <= 10) ? -4 : -5;
+      return utc_time + offset * 3600;
+   }
+   return TimeCurrent();
+}
+
+//+------------------------------------------------------------------+
+//| IsInSessionString: Check if time falls inside Pine session string|
+//+------------------------------------------------------------------+
+bool IsInSessionString(datetime time_val, string session_str)
+{
+   if(session_str == "") return false;
+   
+   string time_part = session_str;
+   string days_part = "";
+   int colon_idx = StringFind(session_str, ":");
+   if(colon_idx != -1)
+   {
+      time_part = StringSubstr(session_str, 0, colon_idx);
+      days_part = StringSubstr(session_str, colon_idx + 1);
+   }
+   
+   MqlDateTime dt;
+   TimeToStruct(time_val, dt);
+   
+   if(days_part != "")
+   {
+      int pine_day = (dt.day_of_week == 0) ? 1 : (dt.day_of_week + 1);
+      string day_char = IntegerToString(pine_day);
+      if(StringFind(days_part, day_char) == -1)
+         return false;
+   }
+   
+   int current_time_mins = dt.hour * 60 + dt.min;
+   string ranges[];
+   int num_ranges = StringSplit(time_part, ',', ranges);
+   if(num_ranges <= 0) return false;
+   
+   for(int i = 0; i < num_ranges; i++)
+   {
+      string range = ranges[i];
+      StringTrimLeft(range);
+      StringTrimRight(range);
+      int dash_idx = StringFind(range, "-");
+      if(dash_idx == -1) continue;
+      
+      string start_str = StringSubstr(range, 0, dash_idx);
+      string end_str = StringSubstr(range, dash_idx + 1);
+      
+      int start_h = (int)StringToInteger(StringSubstr(start_str, 0, 2));
+      int start_m = (int)StringToInteger(StringSubstr(start_str, 2, 2));
+      int end_h = (int)StringToInteger(StringSubstr(end_str, 0, 2));
+      int end_m = (int)StringToInteger(StringSubstr(end_str, 2, 2));
+      
+      int start_mins = start_h * 60 + start_m;
+      int end_mins = end_h * 60 + end_m;
+      
+      if(start_mins <= end_mins)
+      {
+         if(current_time_mins >= start_mins && current_time_mins < end_mins)
+            return true;
+      }
+      else
+      {
+         if(current_time_mins >= start_mins || current_time_mins < end_mins)
+            return true;
+      }
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| IsVolumeSpikeActive: Check if there was a volume spike recently  |
+//+------------------------------------------------------------------+
+bool IsVolumeSpikeActive(int sma_len, double multiplier, int lookback_bars)
+{
+   long vol_arr[];
+   ArraySetAsSeries(vol_arr, true);
+   int copied = CopyTickVolume(Symbol(), Period(), 0, sma_len + lookback_bars + 1, vol_arr);
+   if(copied < sma_len + lookback_bars + 1)
+      return false;
+
+   for(int i = 1; i <= lookback_bars; i++)
+   {
+      double sum = 0;
+      for(int j = 0; j < sma_len; j++)
+      {
+         sum += (double)vol_arr[i + j];
+      }
+      double sma = sum / sma_len;
+      if(sma > 0 && (double)vol_arr[i] > sma * multiplier)
+      {
+         Print("ATS EA: Volume spike detected on bar ", i, " Volume=", vol_arr[i], " SMA=", sma, " Multiplier=", multiplier);
+         return true;
+      }
+   }
+   return false;
+}
+
 // Detect FVG: Bullish FVG = high[2] < low[0]; Bearish FVG = low[2] > high[0]
 void DetectFVG(double &highs[], double &lows[])
 {
@@ -414,8 +536,28 @@ void ExecuteStrategyLogic()
        fvg_ob_bear = (in_bear_fvg || in_bear_ob) && touched_premium;
    }
    
-   bool longCond  = (trend==1)  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos;
-   bool shortCond = (trend==-1) && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos;
+   // News & Volume filter
+    bool filter_blocked = false;
+    if(InpUseNewsFilter)
+    {
+       datetime time_in_tz = GetTimeInTimezone(InpNewsTimezone);
+       if(IsInSessionString(time_in_tz, InpNewsSession))
+       {
+          filter_blocked = true;
+          Print("ATS EA: Trade blocked by News Filter (Current Time in Timezone: ", TimeToString(time_in_tz), ")");
+       }
+    }
+    if(!filter_blocked && InpUseVolFilter)
+    {
+       if(IsVolumeSpikeActive(InpVolSmaLen, InpVolSpikeMult, InpVolSpikeLookback))
+       {
+          filter_blocked = true;
+          Print("ATS EA: Trade blocked by Volume Spike Filter.");
+       }
+    }
+    
+    bool longCond  = (trend==1)  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked;
+    bool shortCond = (trend==-1) && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked;
 
    double pt   = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
    double tp_v = InpTPPips * pt;
