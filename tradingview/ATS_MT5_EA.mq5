@@ -62,10 +62,10 @@ input int      InpVolSmaLen            = 20;           // Volume SMA Length
 input int      InpVolSpikeLookback     = 3;            // Block Duration (Bars)
 
 input group "== Breakeven & Scaled Trailing Stop =="
-input int      InpBEPips               = 500;
-input int      InpTrailLevel1Pips      = 1000;
-input int      InpTrailLevel1LockPips  = 500;
-input int      InpTPPips               = 2000;
+input int      InpBEPips               = 5000;
+input int      InpTrailLevel1Pips      = 10000;
+input int      InpTrailLevel1LockPips  = 5000;
+input int      InpTPPips               = 20000;
 
 //--- Global Variables
 CTrade   trade;

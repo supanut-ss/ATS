@@ -5,9 +5,17 @@ import {
 } from '@mui/material';
 
 const fmt = (v, d = 2) => v == null ? '—' : Number(v).toFixed(d);
+const ensureUtcIso = (dateStr) => {
+  if (!dateStr) return '';
+  if (typeof dateStr === 'string' && !dateStr.endsWith('Z') && !dateStr.includes('+') && !/-\d{2}:\d{2}$/.test(dateStr)) {
+    return dateStr + 'Z';
+  }
+  return dateStr;
+};
+
 const fmtTime = (iso) => {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = new Date(ensureUtcIso(iso));
   return d.toLocaleDateString('th-TH') + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 };
 

@@ -752,7 +752,7 @@ VALUES (@ts, @action, @body, @result, @error)";
         {
             list.Add(new WebhookLogEntry
             {
-                Timestamp = rdr.GetDateTime("timestamp"),
+                Timestamp = DateTime.SpecifyKind(rdr.GetDateTime("timestamp"), DateTimeKind.Utc),
                 Action    = rdr.GetString("action"),
                 Body      = rdr.GetString("body"),
                 Result    = rdr.IsDBNull(rdr.GetOrdinal("result")) ? null : rdr.GetString("result"),
@@ -778,7 +778,7 @@ VALUES (@ts, @action, @body, @result, @error)";
             {
                 return new AccountSnapshotEntity
                 {
-                    Timestamp = rdr.GetDateTime("timestamp"),
+                    Timestamp = DateTime.SpecifyKind(rdr.GetDateTime("timestamp"), DateTimeKind.Utc),
                     Balance = rdr.GetDouble("balance"),
                     Equity = rdr.GetDouble("equity"),
                     FreeMargin = rdr.GetDouble("free_margin"),
@@ -854,7 +854,7 @@ VALUES (@ts, @balance, @equity, @free_margin, @bid, @ask, @open_positions, @posi
     {
         Id         = r.GetString("id"),
         SignalId   = r.GetString("signal_id"),
-        Timestamp  = r.GetDateTime("timestamp"),
+        Timestamp  = DateTime.SpecifyKind(r.GetDateTime("timestamp"), DateTimeKind.Utc),
         BarTime    = r.GetInt64("bar_time"),
         Timeframe  = r.GetString("timeframe"),
         Action     = r.GetString("action"),

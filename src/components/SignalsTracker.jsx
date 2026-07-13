@@ -12,6 +12,14 @@ import { clearSignals } from '../services/api';
 const fmt = (v, d = 2) =>
   v == null ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 
+const ensureUtcIso = (dateStr) => {
+  if (!dateStr) return '';
+  if (typeof dateStr === 'string' && !dateStr.endsWith('Z') && !dateStr.includes('+') && !/-\d{2}:\d{2}$/.test(dateStr)) {
+    return dateStr + 'Z';
+  }
+  return dateStr;
+};
+
 function StatCard({ label, value, color, icon, subtitle }) {
   return (
     <Paper sx={{ p: 2.5, height: '100%' }}>
@@ -167,7 +175,7 @@ export default function SignalsTracker({ signals, loading, onRefresh }) {
                   sig.status === 'WIN' ? 'success' :
                   sig.status === 'LOSS' ? 'error' : 'warning';
                 
-                const timeStr = new Date(sig.timestamp).toLocaleString('th-TH', {
+                const timeStr = new Date(ensureUtcIso(sig.timestamp)).toLocaleString('th-TH', {
                   month: 'short',
                   day: 'numeric',
                   hour: '2-digit',
