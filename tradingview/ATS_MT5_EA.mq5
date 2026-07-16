@@ -16,7 +16,7 @@ input group "== Webhook Connection Settings =="
 input bool     InpEnableWebhookPolling = false;
 input string   InpBackendURL           = "https://ats.thaipesleague.com";
 input string   InpAuthToken            = "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f";
-input int      InpPollInterval         = 1000;
+input int      InpPollInterval         = 10000;
 
 input group "== Trade Settings =="
 input int      InpSlippage             = 30;
@@ -38,7 +38,7 @@ input ENUM_ENTRY_MODE InpEntryMode = ENTRY_MODE_DISCOUNT_ONLY;
 
 input group "== Scalping Risk =="
 input bool     InpUseFixedSL           = true;
-input int      InpFixedSLPips          = 500;
+input int      InpFixedSLPips          = 5000;
 
 input group "== Position Sizing (Fixed 0.05 lot per trade) =="
 input double   InpFixedLot             = 0.05;
@@ -48,12 +48,12 @@ input bool     InpUseEMA               = true;
 input int      InpEMALength            = 200;
 input bool     InpUseH1Trend           = true;
 input int      InpH1EMALen             = 21;
-input bool     InpUseH4Trend           = false;
+input bool     InpUseH4Trend           = true;
 input int      InpH4EMALen             = 21;
 input bool     InpFilterCounterTrend   = false;
 
 input group "== News & Volume Filters =="
-input bool     InpUseNewsFilter        = true;         // Enable News Filter
+input bool     InpUseNewsFilter        = false;         // Enable News Filter
 input string   InpNewsSession          = "1300-1400,1930-2030:23456"; // News block session (UTC)
 input string   InpNewsTimezone         = "UTC";        // News Timezone (UTC, America/New_York, Asia/Bangkok, Exchange)
 input bool     InpUseVolFilter         = true;         // Enable Volume Spike Filter
