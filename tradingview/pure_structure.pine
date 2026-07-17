@@ -21,11 +21,27 @@ pd_threshold  = input.float(0.618, title="Premium/Discount Fib Threshold", minva
 
 grp_entry    = "== Entry Logic =="
 entry_mode   = input.string("Discount/Premium Only (Original 54% WR)", title="Entry Zone Mode", options=["Discount/Premium Only (Original 54% WR)", "Any FVG/OB (High Frequency)", "FVG/OB Inside Discount/Premium (Strict ICT)"], group=grp_entry)
+use_zone_filter = input.bool(true, title="Enable Zone Filter", group=grp_entry, tooltip="ปิด = ไม่ต้องรอ pullback ถึง Discount/Premium zone เข้าไม้ทันที่ trend + PA ตรง (เพิ่ม frequency มาก) | ใช้เพื่อ diagnose หาจุด block)")
 
 // --- Fixed Scalping SL ---
 grp_scalp    = "== Scalping Risk =="
 use_fixed_sl = input.bool(true, title="Use Fixed SL instead of Structure", group=grp_scalp, tooltip="ใช้ SL คงที่สำหรับสายสั้น แทนการอิง Swing Low/High")
-fixed_sl_pips= input.int(500, title="Fixed SL (Pips/Points)", group=grp_scalp, tooltip="ถ้าเปิดใช้งาน จะใช้ค่านี้เป็นระยะตัดขาดทุนเลย (เช่น 500 pip)")
+fixed_sl_pips= input.int(5000, title="Fixed SL (Pips/Points)", group=grp_scalp, tooltip="ถ้าเปิดใช้งาน จะใช้ค่านี้เป็นระยะตัดขาดทุนเลย (เช่น 5000 point = $5)")
+
+// --- M5 Anti Fake-PA ---
+grp_pa       = "== M5 Anti Fake-PA =="
+pa_body_min  = input.float(0.35, title="Min Body Ratio (0.0–1.0)",   minval=0.1, maxval=0.9, step=0.05, group=grp_pa, tooltip="body ของแท่ง PA ต้องใหญ่กว่า X% ของ range | 0.35=35% เหมาะสำหรับ M5 XAUUSD")
+pa_wick_max  = input.float(0.60, title="Max Wick Ratio (0.0–1.0)",   minval=0.0, maxval=0.9, step=0.05, group=grp_pa, tooltip="wick ด้านที่สวนทางต้องไม่เกิน X% | 0.60=60% ป้องกัน rejection candle เขียวจัด")
+pa_close_min = input.float(0.45, title="Min Close Position (0.0–1.0)",minval=0.1, maxval=0.9, step=0.05, group=grp_pa, tooltip="close ต้องอยู่ในช่วงบน/ล่าง X% ของ range | 0.45=45% เหมาะสำหรับ M5 XAUUSD")
+pa_engulf    = input.bool(false, title="Require Engulfing Close",                              group=grp_pa, tooltip="bullish: close ต้องปิดเหนือ open[1] | เปิด = เข้มสุดบน M5")
+bos_max_bars   = input.int(3,    title="Pending BOS Expiry (Bars)",   minval=1, maxval=10,  group=grp_pa, tooltip="Pending BOS จะถูกยกเลิกอัตโนมัติถ้าไม่ยืนยันภายใน N bar")
+choch_max_bars = input.int(20,   title="CHoCH Block Expiry (Bars)",   minval=5, maxval=100, group=grp_pa, tooltip="CHoCH flag จะหมดอายุอัตโนมัติหลัง N bar (M5: 20 bar = 100นาที)")
+
+// --- Debug ---
+grp_debug      = "== Debug =="
+show_debug     = input.bool(true,  title="Show Debug Table",    group=grp_debug, tooltip="ตาราง real-time มุมขวาบน")
+test_mode      = input.bool(false, title="[TEST] Bypass All Filters", group=grp_debug, tooltip="เปิด = เข้าไม้ทันทีที่ trend==1/-1 โดยไม่ต้องมี PA/Zone/EMA/CHoCH | ใช้วินิจฉัยว่า BOS/trend ทำงานหรือเปล่า")
+show_bar_debug = input.bool(false, title="[TEST] Show Bar Labels",  group=grp_debug, tooltip="แสดง label ทุก bar ว่า trend เป็นอะไร + PA ตรงไหม (เปิดให้ zoom เข้าไปดูบนกราฟ)")
 
 // --- Position Sizing ---
 grp_risk  = "== Position Sizing =="
@@ -33,28 +49,29 @@ fixed_lot = input.float(0.05, title="Fixed Lot (0.05)", minval=0.01, step=0.01, 
 
 // --- Scaled TP/BE/Trail ---
 grp_exit    = "== Exit Management =="
-be_pips     = input.int(500,  title="Breakeven at (pip profit)", group=grp_exit,
-              tooltip="เมื่อกำไรถึง 500 pip ให้ย้าย SL ไปที่ entry (กันหน้าทุน)")
-trail1_pips = input.int(1000, title="Trail Level1 trigger (pip profit)", group=grp_exit,
-              tooltip="เมื่อกำไรถึง 1000 pip ให้ล็อก SL ที่ entry+500pip")
-lock1_pips  = input.int(500,  title="Trail Level1 lock offset (pip)", group=grp_exit,
-              tooltip="ค่า offset จาก entry ที่จะล็อก SL เมื่อถึง 1000 pip (= entry+500pip)")
-tp_pips     = input.int(2000, title="Hard TP (pip from entry)", group=grp_exit,
-              tooltip="TP อัตโนมัติที่ 2000 pip จาก entry")
+be_pips     = input.int(5000,  title="Breakeven at (pip profit)", group=grp_exit,
+              tooltip="เมื่อกำไรถึง 5000 point ให้ย้าย SL ไปที่ entry (กันหน้าทุน)")
+trail1_pips = input.int(10000, title="Trail Level1 trigger (pip profit)", group=grp_exit,
+              tooltip="เมื่อกำไรถึง 10000 point ให้ล็อก SL ที่ entry+5000 point")
+lock1_pips  = input.int(5000,  title="Trail Level1 lock offset (pip)", group=grp_exit,
+              tooltip="ค่า offset จาก entry ที่จะล็อก SL เมื่อถึง 10000 point (= entry+5000 point)")
+tp_pips     = input.int(20000, title="Hard TP (pip from entry)", group=grp_exit,
+              tooltip="TP อัตโนมัติที่ 20000 point จาก entry")
 
 // --- Trend Filters ---
 grp_trend            = "== Trend Filters =="
-use_ema              = input.bool(true,  title="EMA 200 Filter", group=grp_trend)
-ema_length           = input.int(200,    title="EMA Length", group=grp_trend)
-use_h1_trend         = input.bool(true,  title="H1 EMA Filter", group=grp_trend)
-h1_ema_len           = input.int(21,     title="H1 EMA Length", minval=5, group=grp_trend)
-use_h4_trend         = input.bool(false, title="H4 EMA Filter", group=grp_trend)
-h4_ema_len           = input.int(21,     title="H4 EMA Length", minval=5, group=grp_trend)
+use_ema              = input.bool(false, title="EMA 200 Filter",              group=grp_trend, tooltip="\u0e1bิด default — H1+H4 EMA กรองทิศทางอยู่แล้ว | EMA200 M5 ขยับช้า ประอัพต่อ scalping")
+ema_length           = input.int(200,    title="EMA Length",                 group=grp_trend)
+ema_buffer_pips      = input.int(50,     title="EMA Buffer (pips tolerance)",group=grp_trend, tooltip="ถ้าเปิด EMA200 filter ให้เพิ่ม buffer นี้เพื่อไม่ให้ EMA block เมื่อราคาอยู่ใกล้ EMA มาก (50 pip = $0.05 XAUUSD)")
+use_h1_trend         = input.bool(true,  title="H1 EMA Filter",              group=grp_trend)
+h1_ema_len           = input.int(21,     title="H1 EMA Length",              minval=5, group=grp_trend)
+use_h4_trend         = input.bool(true,  title="H4 EMA Filter",              group=grp_trend)
+h4_ema_len           = input.int(21,     title="H4 EMA Length",              minval=5, group=grp_trend)
 filter_counter_trend = input.bool(false, title="Block Counter-Trend trades", group=grp_trend)
 
 // --- News & Volume Filters ---
 grp_news_vol       = "== News & Volume Filters =="
-use_news_filter    = input.bool(true, title="Enable News Filter", group=grp_news_vol, tooltip="งดเข้าไม้ในช่วงเวลาที่มีข่าวสำคัญ")
+use_news_filter    = input.bool(false, title="Enable News Filter", group=grp_news_vol, tooltip="งดเข้าไม้ในช่วงเวลาที่มีข่าวสำคัญ")
 news_session       = input.session("1300-1400,1930-2030:23456", title="News Block Session (UTC)", group=grp_news_vol, tooltip="เวลาที่จะงดเข้าเทรด (รูปแบบ hhmm-hhmm:days โดย 2-6 คือ จันทร์-ศุกร์, คั่นด้วยลูกน้ำได้)")
 news_timezone      = input.string("UTC", title="News Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_news_vol)
 
@@ -117,9 +134,17 @@ var string last_pivot_type  = na
 var line   zigzag_line      = na
 var int    trend            = 0
 
-// CHoCH flags
-var bool choch_bull = false
-var bool choch_bear = false
+// CHoCH flags + bar tracker (สำหรับ auto-expiry)
+var bool choch_bull     = false
+var bool choch_bear     = false
+var int  choch_bull_bar = 0
+var int  choch_bear_bar = 0
+
+// [FIX3] Pending BOS flags — ต้องยืนยัน 2 bar จึงเปลี่ยน trend + expiry counter (M5)
+var bool pending_bos_bull  = false
+var bool pending_bos_bear  = false
+var int  bos_bull_bar      = 0     // bar_index ที่เริ่ม pending bull
+var int  bos_bear_bar      = 0     // bar_index ที่เริ่ม pending bear
 
 if not na(ph)
     prev_ph     := last_ph
@@ -127,7 +152,8 @@ if not na(ph)
     last_ph_bar := bar_index - pivot_length
     // CHoCH Bear: new PH < prev PH in uptrend (trend change signal)
     if trend == 1 and not na(prev_ph) and last_ph < prev_ph
-        choch_bear := true
+        choch_bear     := true
+        choch_bear_bar := last_ph_bar  // บันทึกเวลาที่ CHoCH เกิด
         label.new(last_ph_bar, ph, "CHoCH", color=color.new(color.red,20), textcolor=color.white, size=size.small, style=label.style_label_down)
     if last_pivot_type == "L"
         zigzag_line     := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_ph_bar, y2=ph, color=color.new(color.orange,20), width=2)
@@ -151,7 +177,8 @@ if not na(pl)
     last_pl_bar := bar_index - pivot_length
     // CHoCH Bull: new PL > prev PL in downtrend (trend change signal)
     if trend == -1 and not na(prev_pl) and last_pl > prev_pl
-        choch_bull := true
+        choch_bull     := true
+        choch_bull_bar := last_pl_bar  // บันทึกเวลาที่ CHoCH เกิด
         label.new(last_pl_bar, pl, "CHoCH", color=color.new(color.green,20), textcolor=color.white, size=size.small, style=label.style_label_up)
     if last_pivot_type == "H"
         zigzag_line     := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_pl_bar, y2=pl, color=color.new(color.teal,20), width=2)
@@ -170,17 +197,49 @@ if not na(pl)
         last_pivot_type := "L"
 
 // ==========================================
-// BOS (Break of Structure)
+// BOS (Break of Structure) — [FIX3] ต้องยืนยัน 2 แท่งติดต่อกัน
 // ==========================================
-if trend <= 0 and close > last_ph
-    trend      := 1
-    choch_bear := false
-    label.new(bar_index, high, "BOS▲", color=color.new(color.blue,20), textcolor=color.white, style=label.style_label_up, size=size.small)
+// [CHoCH Auto-Expiry] ป้องกัน flag ค้างตลอดกาล — หมดอายุหลัง choch_max_bars bar
+if choch_bear and (bar_index - choch_bear_bar) >= choch_max_bars
+    choch_bear := false  // หมดอายุ — เปิด Long ได้อีกครั้ง
 
-if trend >= 0 and close < last_pl
-    trend      := -1
-    choch_bull := false
+if choch_bull and (bar_index - choch_bull_bar) >= choch_max_bars
+    choch_bull := false  // หมดอายุ — เปิด Short ได้อีกครั้ง
+
+// แท่งแรก: ตั้ง pending flag + บันทึก bar_index
+if trend <= 0 and close > last_ph and not pending_bos_bull
+    pending_bos_bull := true
+    bos_bull_bar     := bar_index
+    pending_bos_bear := false
+
+if trend >= 0 and close < last_pl and not pending_bos_bear
+    pending_bos_bear := true
+    bos_bear_bar     := bar_index
+    pending_bos_bull := false
+
+// [M5 FIX] Expiry: ยกเลิก pending BOS ถ้าเกิน bos_max_bars bar แล้วยังไม่ยืนยัน
+if pending_bos_bull and (bar_index - bos_bull_bar) >= bos_max_bars
+    pending_bos_bull := false  // หมดอายุ — False BOS
+
+if pending_bos_bear and (bar_index - bos_bear_bar) >= bos_max_bars
+    pending_bos_bear := false  // หมดอายุ — False BOS
+
+// แท่งที่สอง (หรือมากกว่า): ยืนยัน BOS จริง
+if pending_bos_bull and close > last_ph
+    trend            := 1
+    choch_bear       := false
+    pending_bos_bull := false
+    label.new(bar_index, high, "BOS▲", color=color.new(color.blue,20), textcolor=color.white, style=label.style_label_up, size=size.small)
+else if pending_bos_bull and close <= last_ph
+    pending_bos_bull := false  // Closed below again — False BOS
+
+if pending_bos_bear and close < last_pl
+    trend            := -1
+    choch_bull       := false
+    pending_bos_bear := false
     label.new(bar_index, low, "BOS▼", color=color.new(color.red,20), textcolor=color.white, style=label.style_label_down, size=size.small)
+else if pending_bos_bear and close >= last_pl
+    pending_bos_bear := false  // Closed above again — False BOS
 
 // ==========================================
 // Swing High/Low boundaries
@@ -213,19 +272,18 @@ premium_level  = swing_high - (swing_range * pd_threshold)
 var bool touched_discount = false
 var bool touched_premium  = false
 
-// Reset FIRST (correct conditions), then set
-// touched_discount: reset when trend is NOT bullish, or when position is open
-if trend != 1 or strategy.position_size != 0
-    touched_discount := false
-// touched_premium: reset when trend is NOT bearish, or when position is open
-if trend != -1 or strategy.position_size != 0   // BUG FIX: was (trend == -1) which always cleared it!
-    touched_premium  := false
-
-// Mark zone as touched
+// [BUGFIX] Mark FIRST, reset after — ป้องกัน zone ถูก reset บน bar เดียวกับที่เริ่มตั้ง
+// Step 1: Mark zone as touched FIRST
 if trend == 1 and low <= discount_level
     touched_discount := true
 if trend == -1 and high >= premium_level
     touched_premium  := true
+
+// Step 2: Reset when conditions no longer valid
+if trend != 1 or strategy.position_size != 0
+    touched_discount := false
+if trend != -1 or strategy.position_size != 0
+    touched_premium  := false
 
 // ==========================================
 // FVG Detection (Fair Value Gap)
@@ -252,6 +310,15 @@ if not na(bear_fvg_low) and trend == -1
     last_bear_fvg_l := bear_fvg_low
     last_bear_fvg_h := bear_fvg_high
     box.new(bar_index-2, bear_fvg_high, bar_index, bear_fvg_low, bgcolor=color.new(color.red,85), border_color=color.new(color.red,50))
+
+// [FIX4] FVG Invalidation — ถ้าราคาปิดทะลุผ่าน FVG ไปอีกด้านแสดงว่าถูก fill แล้ว ให้ reset
+if not na(last_bull_fvg_l) and close < last_bull_fvg_l
+    last_bull_fvg_l := na
+    last_bull_fvg_h := na
+
+if not na(last_bear_fvg_h) and close > last_bear_fvg_h
+    last_bear_fvg_l := na
+    last_bear_fvg_h := na
 
 // FVG touch
 in_bull_fvg = not na(last_bull_fvg_l) and low <= last_bull_fvg_h and high >= last_bull_fvg_l
@@ -295,16 +362,61 @@ if liq_bear_sweep and trend == -1
     label.new(bar_index, high, "LIQ↓", color=color.new(color.fuchsia,20), textcolor=color.white, size=size.tiny, style=label.style_label_down)
 
 // ==========================================
-// PA Confirmation (Original Strict Reversal)
+// PA Confirmation — [M5 ANTI FAKE-PA] 4 ชั้นป้องกัน
 // ==========================================
-bullish_pa = close[1] < open[1] and close > open
-bearish_pa = close[1] > open[1] and close < open
+bullish_pa_raw = close[1] < open[1] and close > open
+bearish_pa_raw = close[1] > open[1] and close < open
+
+// --- ค่าพื้นฐานแท่ง PA ปัจจุบัน ---
+bull_body  = close - open
+bull_range = high - low
+bear_body  = open - close
+bear_range = high - low
+
+// [LAYER 1] Body Ratio — body ต้องใหญ่กว่า pa_body_min% ของ range (กรอง doji)
+bull_body_ratio = bull_range > 0 ? bull_body / bull_range : 0.0
+bear_body_ratio = bear_range > 0 ? bear_body / bear_range : 0.0
+
+// [LAYER 2] Wick Rejection Filter — wick ด้านสวนทางห้ามยาวเกิน pa_wick_max%
+// bullish: ห้าม upper wick ยาว (rejection ด้านบน = แรงขายยังแรง)
+// bearish: ห้าม lower wick ยาว (rejection ด้านล่าง = แรงซื้อยังแรง)
+bull_upper_wick   = high - close
+bear_lower_wick   = close - low
+bull_wick_ratio   = bull_range > 0 ? bull_upper_wick / bull_range : 1.0
+bear_wick_ratio   = bear_range > 0 ? bear_lower_wick / bear_range : 1.0
+
+// [LAYER 3] Close Position — close ต้องอยู่ใน pa_close_min% บน/ล่างของ range
+// bullish: (close-low)/range >= pa_close_min  → close ใกล้ top
+// bearish: (high-close)/range >= pa_close_min → close ใกล้ bottom
+bull_close_pos = bull_range > 0 ? (close - low)  / bull_range : 0.0
+bear_close_pos = bear_range > 0 ? (high - close) / bear_range : 0.0
+
+// [LAYER 4] Engulfing Close — close ต้องทะลุ open ของ bar ก่อนหน้า (body engulfing)
+// bullish: close > open[1] (ปิดเหนือ open แท่ง bearish ก่อนหน้า)
+// bearish: close < open[1] (ปิดต่ำกว่า open แท่ง bullish ก่อนหน้า)
+bull_engulf = not pa_engulf or (close > open[1])
+bear_engulf = not pa_engulf or (close < open[1])
+
+// รวมทุกชั้น
+bullish_pa = bullish_pa_raw
+           and bull_body_ratio >= pa_body_min
+           and bull_wick_ratio  <= pa_wick_max
+           and bull_close_pos  >= pa_close_min
+           and bull_engulf
+
+bearish_pa = bearish_pa_raw
+           and bear_body_ratio >= pa_body_min
+           and bear_wick_ratio  <= pa_wick_max
+           and bear_close_pos  >= pa_close_min
+           and bear_engulf
 
 // ==========================================
 // EMA & Trend filter
 // ==========================================
-ema_long_cond  = use_ema ? (close > ema_line) : true
-ema_short_cond = use_ema ? (close < ema_line) : true
+ema_buf       = ema_buffer_pips * syminfo.mintick
+// Buffer: Long แค่ต้องปิดอยู่เหนือ EMA - buffer, Short แค่ต้องปิดอยู่ต่ำกว่า EMA + buffer
+ema_long_cond  = use_ema ? (close > ema_line - ema_buf) : true
+ema_short_cond = use_ema ? (close < ema_line + ema_buf) : true
 long_trend_ok  = not filter_counter_trend or not htf_bear
 short_trend_ok = not filter_counter_trend or not htf_bull
 
@@ -314,7 +426,11 @@ short_trend_ok = not filter_counter_trend or not htf_bull
 bool zone_bull = false
 bool zone_bear = false
 
-if entry_mode == "Discount/Premium Only (Original 54% WR)"
+if not use_zone_filter
+    // Zone filter ปิดอยู่ — เข้าไม้ทันที่ trend + PA ตรง
+    zone_bull := true
+    zone_bear := true
+else if entry_mode == "Discount/Premium Only (Original 54% WR)"
     zone_bull := touched_discount
     zone_bear := touched_premium
 else if entry_mode == "Any FVG/OB (High Frequency)"
@@ -344,12 +460,119 @@ bgcolor(is_volume_blocked ? color.new(color.orange, 92) : na, title="Volume Spik
 // ==========================================
 // Final Entry Conditions
 // ==========================================
-longCondition  = (trend == 1)  and zone_bull and bullish_pa and ema_long_cond  and long_trend_ok  and not filter_blocked and strategy.position_size == 0
-shortCondition = (trend == -1) and zone_bear and bearish_pa and ema_short_cond and short_trend_ok and not filter_blocked and strategy.position_size == 0
+bool longCondition  = false
+bool shortCondition = false
 
-// Debug Background to see if conditions ever trigger
-bgcolor(longCondition ? color.new(color.green, 80) : na, title="Debug Long")
-bgcolor(shortCondition ? color.new(color.red, 80) : na, title="Debug Short")
+if test_mode
+    // [TEST] Bypass ทุก filter — เข้าได้ทันที่ trend เปลี่ยน
+    // ถ้าไม่ออกแม้แต่ใน test_mode แปลว่า BOS/trend logic ไม่ทำงาน!
+    longCondition  := trend == 1  and strategy.position_size == 0
+    shortCondition := trend == -1 and strategy.position_size == 0
+else
+    // [GUARD] CHoCH flag ป้องกันกลับตัว
+    longCondition  := (trend == 1)  and zone_bull and bullish_pa and ema_long_cond  and long_trend_ok  and not filter_blocked and strategy.position_size == 0 and not choch_bear
+    shortCondition := (trend == -1) and zone_bear and bearish_pa and ema_short_cond and short_trend_ok and not filter_blocked and strategy.position_size == 0 and not choch_bull
+
+// Bar labels สำหรับ diagnose (เปิดด้วย show_bar_debug)
+if show_bar_debug
+    _t = trend == 1 ? "Bull" : trend == -1 ? "Bear" : "—"
+    _pa_l = bullish_pa ? "bPA✓" : bullish_pa_raw ? "bPA✗f" : ""
+    _pa_s = bearish_pa ? "sPA✓" : bearish_pa_raw ? "sPA✗f" : ""
+    _lbl = _t + (str.length(_pa_l) > 0 ? "|" + _pa_l : "") + (str.length(_pa_s) > 0 ? "|" + _pa_s : "")
+    _col = trend == 1 ? color.new(color.teal, 40) : trend == -1 ? color.new(color.red, 40) : color.new(color.gray, 60)
+    label.new(bar_index, high, _lbl, style=label.style_label_down, color=_col, textcolor=color.white, size=size.tiny)
+
+// Debug Background
+bgcolor(longCondition  ? color.new(color.green, 80) : na, title="Debug Long")
+bgcolor(shortCondition ? color.new(color.red,   80) : na, title="Debug Short")
+
+// ==========================================
+// Debug Table — แสดงสาเหตุที่ติดอยู่บนกราฟแบบ real-time
+// ==========================================
+var table dbg_tbl = table.new(position.top_right, 3, 13,
+     bgcolor      = color.new(color.black, 15),
+     border_width = 1,
+     border_color = color.new(color.gray, 50))
+
+c_ok  = color.new(color.teal,   20)
+c_no  = color.new(color.red,    20)
+c_hdr = color.new(color.navy,   20)
+c_na  = color.new(color.gray,   50)
+
+if show_debug and barstate.islast
+    table.cell(dbg_tbl, 0, 0, "Condition",       bgcolor=c_hdr, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 0, "LONG",            bgcolor=c_hdr, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 0, "SHORT",           bgcolor=c_hdr, text_color=color.white, text_size=size.small)
+
+    // Trend
+    table.cell(dbg_tbl, 0, 1, "Trend",           bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 1, trend == 1  ? "✓ Bull" : str.tostring(trend), bgcolor=(trend == 1  ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 1, trend == -1 ? "✓ Bear" : str.tostring(trend), bgcolor=(trend == -1 ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    // Zone
+    table.cell(dbg_tbl, 0, 2, "Zone",            bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 2, zone_bull ? "✓ OK"  : touched_discount ? "✓ Touch" : "✗ No Touch", bgcolor=(zone_bull ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 2, zone_bear ? "✓ OK"  : touched_premium  ? "✓ Touch" : "✗ No Touch", bgcolor=(zone_bear ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    // Bullish/Bearish PA
+    table.cell(dbg_tbl, 0, 3, "PA Signal",       bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 3, bullish_pa ? "✓ OK" : (bullish_pa_raw ? "✗ Filter" : "✗ No PA"), bgcolor=(bullish_pa ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 3, bearish_pa ? "✓ OK" : (bearish_pa_raw ? "✗ Filter" : "✗ No PA"), bgcolor=(bearish_pa ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    // PA filter detail (bull side)
+    table.cell(dbg_tbl, 0, 4, "PA Body/Wick/Pos",bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 4,
+         str.tostring(math.round(bull_body_ratio,2)) + " / " +
+         str.tostring(math.round(bull_wick_ratio,2)) + " / " +
+         str.tostring(math.round(bull_close_pos,2)),
+         bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 4,
+         str.tostring(math.round(bear_body_ratio,2)) + " / " +
+         str.tostring(math.round(bear_wick_ratio,2)) + " / " +
+         str.tostring(math.round(bear_close_pos,2)),
+         bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+
+    // EMA
+    table.cell(dbg_tbl, 0, 5, "EMA 200",         bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 5, ema_long_cond  ? "✓ Above" : "✗ Below", bgcolor=(ema_long_cond  ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 5, ema_short_cond ? "✓ Below" : "✗ Above", bgcolor=(ema_short_cond ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    // CHoCH block
+    table.cell(dbg_tbl, 0, 6, "CHoCH Block",     bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 6, choch_bear ? "⚠ BLOCKING" : "✓ Clear", bgcolor=(choch_bear ? c_no : c_ok), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 6, choch_bull ? "⚠ BLOCKING" : "✓ Clear", bgcolor=(choch_bull ? c_no : c_ok), text_color=color.white, text_size=size.small)
+
+    // Pending BOS block
+    table.cell(dbg_tbl, 0, 7, "Pend.BOS Block",  bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 7, pending_bos_bear ? "⚠ Bear Pend" : "✓ Clear", bgcolor=(pending_bos_bear ? c_no : c_ok), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 7, pending_bos_bull ? "⚠ Bull Pend" : "✓ Clear", bgcolor=(pending_bos_bull ? c_no : c_ok), text_color=color.white, text_size=size.small)
+
+    // News/Vol filter
+    table.cell(dbg_tbl, 0, 8, "Filter Block",    bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 8, filter_blocked ? "⚠ NEWS/VOL" : "✓ Clear", bgcolor=(filter_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 8, filter_blocked ? "⚠ NEWS/VOL" : "✓ Clear", bgcolor=(filter_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
+
+    // Swing info
+    table.cell(dbg_tbl, 0, 9, "Swing H/L",       bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 9, str.tostring(math.round(swing_high,2)) + " / " + str.tostring(math.round(swing_low,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 9, "Disc:" + str.tostring(math.round(discount_level,2)) + " Prem:" + str.tostring(math.round(premium_level,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+
+    // EMA value
+    table.cell(dbg_tbl, 0,10, "EMA200 val",      bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1,10, str.tostring(math.round(ema_line,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2,10, "Close: " + str.tostring(math.round(close,2)),        bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+
+    // Final result
+    table.cell(dbg_tbl, 0,11, "=== READY ===",   bgcolor=c_hdr, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1,11, longCondition  ? "🟢 LONG FIRE!"  : "🔴 NO ENTRY", bgcolor=(longCondition  ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2,11, shortCondition ? "🟢 SHORT FIRE!" : "🔴 NO ENTRY", bgcolor=(shortCondition ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    // CHoCH bar remaining
+    int bear_remaining = choch_bear ? choch_max_bars - (bar_index - choch_bear_bar) : 0
+    int bull_remaining = choch_bull ? choch_max_bars - (bar_index - choch_bull_bar) : 0
+    table.cell(dbg_tbl, 0,12, "CHoCH Expire",    bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1,12, choch_bear ? "⏳ " + str.tostring(bear_remaining) + " bars left" : "-", bgcolor=(choch_bear ? c_no : c_na), text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2,12, choch_bull ? "⏳ " + str.tostring(bull_remaining) + " bars left" : "-", bgcolor=(choch_bull ? c_no : c_na), text_color=color.white, text_size=size.tiny)
 
 // ==========================================
 // Execution & Risk Management
