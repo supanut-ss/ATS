@@ -2,9 +2,11 @@
 strategy(
      title               = "Pure Structure v2 [Liquidity+CHoCH+BOS+FVG/OB]",
      overlay             = true,
-     initial_capital     = 10000,
+     initial_capital     = 100000,
      default_qty_type    = strategy.fixed,
-     default_qty_value   = 1.0,
+     default_qty_value   = 0.01,
+     margin_long         = 0,
+     margin_short        = 0,
      commission_type     = strategy.commission.cash_per_contract,
      commission_value    = 0.035,
      slippage            = 3,
@@ -26,7 +28,7 @@ use_zone_filter = input.bool(true, title="Enable Zone Filter", group=grp_entry, 
 // --- Fixed Scalping SL ---
 grp_scalp    = "== Scalping Risk =="
 use_fixed_sl = input.bool(true, title="Use Fixed SL instead of Structure", group=grp_scalp, tooltip="ใช้ SL คงที่สำหรับสายสั้น แทนการอิง Swing Low/High")
-fixed_sl_pips= input.int(5000, title="Fixed SL (Pips/Points)", group=grp_scalp, tooltip="ถ้าเปิดใช้งาน จะใช้ค่านี้เป็นระยะตัดขาดทุนเลย (เช่น 5000 point = $5)")
+fixed_sl_pips= input.int(500, title="Fixed SL (Points/Pips)", group=grp_scalp, tooltip="500 point = $5.00 ระยะตัดขาดทุนจากจุดเข้า (เช่น Entry 4000 -> SL 3995)")
 
 // --- M5 Anti Fake-PA ---
 grp_pa       = "== M5 Anti Fake-PA =="
@@ -49,14 +51,14 @@ fixed_lot = input.float(0.05, title="Fixed Lot (0.05)", minval=0.01, step=0.01, 
 
 // --- Scaled TP/BE/Trail ---
 grp_exit    = "== Exit Management =="
-be_pips     = input.int(5000,  title="Breakeven at (pip profit)", group=grp_exit,
-              tooltip="เมื่อกำไรถึง 5000 point ให้ย้าย SL ไปที่ entry (กันหน้าทุน)")
-trail1_pips = input.int(10000, title="Trail Level1 trigger (pip profit)", group=grp_exit,
-              tooltip="เมื่อกำไรถึง 10000 point ให้ล็อก SL ที่ entry+5000 point")
-lock1_pips  = input.int(5000,  title="Trail Level1 lock offset (pip)", group=grp_exit,
-              tooltip="ค่า offset จาก entry ที่จะล็อก SL เมื่อถึง 10000 point (= entry+5000 point)")
-tp_pips     = input.int(20000, title="Hard TP (pip from entry)", group=grp_exit,
-              tooltip="TP อัตโนมัติที่ 20000 point จาก entry")
+be_pips     = input.int(500,   title="Breakeven at (Points)", group=grp_exit,
+              tooltip="เมื่อกำไรถึง $5.00 (500 point) ให้ย้าย SL มาที่ Entry (กันหน้าทุน)")
+trail1_pips = input.int(1000,  title="Trail Level1 trigger (Points)", group=grp_exit,
+              tooltip="เมื่อกำไรถึง $10.00 (1000 point) ให้เริ่ม Trailing SL")
+lock1_pips  = input.int(500,   title="Trail Level1 lock offset (Points)", group=grp_exit,
+              tooltip="ล็อกกำไรขั้นต่ำ $5.00 (500 point) เมื่อถึง Trail Level1")
+tp_pips     = input.int(2000,  title="Hard TP (Points from entry)", group=grp_exit,
+              tooltip="TP อัตโนมัติที่ $20.00 (2000 point) จากจุดเข้า (เช่น Entry 4000 -> TP 4020)")
 
 // --- Trend Filters ---
 grp_trend            = "== Trend Filters =="
@@ -75,10 +77,23 @@ use_news_filter    = input.bool(false, title="Enable News Filter", group=grp_new
 news_session       = input.session("1300-1400,1930-2030:23456", title="News Block Session (UTC)", group=grp_news_vol, tooltip="เวลาที่จะงดเข้าเทรด (รูปแบบ hhmm-hhmm:days โดย 2-6 คือ จันทร์-ศุกร์, คั่นด้วยลูกน้ำได้)")
 news_timezone      = input.string("UTC", title="News Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_news_vol)
 
-use_vol_filter     = input.bool(true, title="Enable Volume Spike Filter", group=grp_news_vol, tooltip="งดเข้าไม้เมื่อมีวอลลุ่มเข้าผิดปกติ")
+use_vol_filter     = input.bool(false, title="Enable Volume Spike Filter", group=grp_news_vol, tooltip="ปิด default — XAUUSD หลายเบรกเกอร์ไม่มีข้อมูล Volume ที่เชื่อถือได้ | เปิดถ้าใช้กับ Futures หรือ Stock")
 vol_spike_mult     = input.float(2.0, title="Volume Spike Multiplier", minval=1.1, step=0.1, group=grp_news_vol, tooltip="จำนวนเท่าของ Volume เฉลี่ยที่ถือว่าเป็น Volume Spike")
 vol_sma_len        = input.int(20, title="Volume SMA Length", minval=5, group=grp_news_vol, tooltip="จำนวนแท่งเทียนที่ใช้อ้างอิงหาค่าเฉลี่ย Volume")
 vol_spike_lookback = input.int(3, title="Block Duration (Bars)", minval=1, group=grp_news_vol, tooltip="จำนวนแท่งเทียนที่จะงดเข้าเทรดหลังจากเกิด Volume Spike (1 = เฉพาะแท่งที่เกิด, 3 = แท่งที่เกิด + 2 แท่งถัดไป)")
+
+// --- Sideway & Range Filters ---
+grp_sideway        = "== Sideway & Range Filters =="
+use_adx_filter     = input.bool(true,  title="Enable ADX Trend Filter",       group=grp_sideway, tooltip="กรองช่วงตลาด Sideway ไร้ทิศทาง (ADX < Threshold จะงดเข้าไม้เพื่อลด False Breakout & Whipsaw)")
+adx_len            = input.int(14,     title="ADX Lookback Length",           minval=5, group=grp_sideway)
+adx_min_threshold  = input.float(20.0, title="Min ADX Threshold",            minval=10.0, maxval=40.0, step=1.0, group=grp_sideway, tooltip="ถ้า ADX น้อยกว่าค่านี้ (เช่น 20.0) แสดงว่าตลาดเป็น Sideway จะบล็อกการเข้าไม้เพื่อลด Drawdown")
+
+use_chop_filter    = input.bool(false, title="Enable Choppiness Index Filter", group=grp_sideway, tooltip="กรองช่วงตลาดแกว่งตัวไร้ทิศทาง (CHOP > Threshold จะงดเข้าเทรด)")
+chop_len           = input.int(14,     title="Choppiness Length",            minval=5, group=grp_sideway)
+chop_max_threshold = input.float(60.0, title="Max CHOP Threshold (0-100)",     minval=40.0, maxval=80.0, step=1.0, group=grp_sideway, tooltip="ค่า CHOP ยิ่งสูง (>55-60) แสดงว่าราคาแกว่งตัวผันผวนไร้เทรนด์")
+
+use_atr_filter     = input.bool(false, title="Enable ATR Volatility Squeeze Filter", group=grp_sideway, tooltip="งดเทรดช่วงสภาวะราคาซบเซา Volatility ต่ำผิดปกติ")
+atr_min_ratio      = input.float(0.80, title="Min ATR Ratio vs SMA(50)",      minval=0.5, maxval=1.5, step=0.05, group=grp_sideway, tooltip="ATR(14) ต้องไม่ต่ำกว่า X% ของ ATR SMA(50)")
 
 // -- Webhook --
 grp_wh        = "== Webhook =="
@@ -443,6 +458,8 @@ else if entry_mode == "FVG/OB Inside Discount/Premium (Strict ICT)"
 // ==========================================
 // News & Volume Filter Logic
 // ==========================================
+// News & Volume Filter Logic
+// ==========================================
 is_news_time = use_news_filter and not na(time(timeframe.period, news_session, news_timezone))
 
 vol_sma = ta.sma(volume, vol_sma_len)
@@ -453,25 +470,66 @@ if use_vol_filter
 
 filter_blocked = is_news_time or is_volume_blocked
 
-// Visuals for Filters
+// Visuals for News & Volume Filters
 bgcolor(is_news_time ? color.new(color.purple, 92) : na, title="News Block Active")
 bgcolor(is_volume_blocked ? color.new(color.orange, 92) : na, title="Volume Spike Block Active")
 
 // ==========================================
+// Sideway & Range Filter Calculations
+// ==========================================
+// 1. ADX Filter (Average Directional Index)
+[_, _, adx_val] = ta.dmi(adx_len, adx_len)
+adx_ok = not use_adx_filter or (not na(adx_val) and adx_val >= adx_min_threshold)
+
+// 2. Choppiness Index Filter
+chop_atr_sum = math.sum(ta.atr(1), chop_len)
+chop_high_low_diff = ta.highest(high, chop_len) - ta.lowest(low, chop_len)
+chop_val = chop_high_low_diff > 0 ? 100.0 * math.log10(chop_atr_sum / chop_high_low_diff) / math.log10(chop_len) : 100.0
+chop_ok = not use_chop_filter or (not na(chop_val) and chop_val <= chop_max_threshold)
+
+// 3. ATR Volatility Ratio Filter
+atr_14 = ta.atr(14)
+atr_sma_50 = ta.sma(atr_14, 50)
+atr_ratio = not na(atr_sma_50) and atr_sma_50 > 0 ? (atr_14 / atr_sma_50) : 1.0
+atr_ok = not use_atr_filter or atr_ratio >= atr_min_ratio
+
+// Sideway Blocked Flag
+sideway_blocked = (use_adx_filter and not adx_ok) or (use_chop_filter and not chop_ok) or (use_atr_filter and not atr_ok)
+
+// Visual for Sideway Block
+bgcolor(sideway_blocked ? color.new(color.blue, 94) : na, title="Sideway Filter Block Active")
+
+// ==========================================
 // Final Entry Conditions
 // ==========================================
+// ตรวจสอบ trend เปลี่ยนบน bar นี้
+trend_turned_bull = ta.change(trend) != 0 and trend == 1
+trend_turned_bear = ta.change(trend) != 0 and trend == -1
+
 bool longCondition  = false
 bool shortCondition = false
 
 if test_mode
-    // [TEST] Bypass ทุก filter — เข้าได้ทันที่ trend เปลี่ยน
-    // ถ้าไม่ออกแม้แต่ใน test_mode แปลว่า BOS/trend logic ไม่ทำงาน!
+    // [TEST MODE] เข้าทุก bar ที่ trend == 1/-1 (ไม่ต้องรอ PA/Zone)
+    // ถ้ายังไม่ออก = BOS/trend ไม่ทำงาน ไม่ใช่ filter ปัญหา
     longCondition  := trend == 1  and strategy.position_size == 0
     shortCondition := trend == -1 and strategy.position_size == 0
 else
-    // [GUARD] CHoCH flag ป้องกันกลับตัว
-    longCondition  := (trend == 1)  and zone_bull and bullish_pa and ema_long_cond  and long_trend_ok  and not filter_blocked and strategy.position_size == 0 and not choch_bear
-    shortCondition := (trend == -1) and zone_bear and bearish_pa and ema_short_cond and short_trend_ok and not filter_blocked and strategy.position_size == 0 and not choch_bull
+    // Normal mode: trend + PA + optional guards
+    _long_base  = trend == 1  and bullish_pa and strategy.position_size == 0
+    _short_base = trend == -1 and bearish_pa and strategy.position_size == 0
+    // Zone filter (optional)
+    _long_zone  = use_zone_filter ? zone_bull : true
+    _short_zone = use_zone_filter ? zone_bear : true
+    // EMA filter (optional, default OFF)
+    _long_ema   = ema_long_cond
+    _short_ema  = ema_short_cond
+    // CHoCH guard (optional)
+    _long_choch  = not choch_bear
+    _short_choch = not choch_bull
+
+    longCondition  := _long_base  and _long_zone  and _long_ema  and long_trend_ok  and not filter_blocked and not sideway_blocked and _long_choch
+    shortCondition := _short_base and _short_zone and _short_ema and short_trend_ok and not filter_blocked and not sideway_blocked and _short_choch
 
 // Bar labels สำหรับ diagnose (เปิดด้วย show_bar_debug)
 if show_bar_debug
@@ -489,7 +547,7 @@ bgcolor(shortCondition ? color.new(color.red,   80) : na, title="Debug Short")
 // ==========================================
 // Debug Table — แสดงสาเหตุที่ติดอยู่บนกราฟแบบ real-time
 // ==========================================
-var table dbg_tbl = table.new(position.top_right, 3, 13,
+var table dbg_tbl = table.new(position.top_right, 3, 14,
      bgcolor      = color.new(color.black, 15),
      border_width = 1,
      border_color = color.new(color.gray, 50))
@@ -552,28 +610,36 @@ if show_debug and barstate.islast
     table.cell(dbg_tbl, 1, 8, filter_blocked ? "⚠ NEWS/VOL" : "✓ Clear", bgcolor=(filter_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
     table.cell(dbg_tbl, 2, 8, filter_blocked ? "⚠ NEWS/VOL" : "✓ Clear", bgcolor=(filter_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
 
+    // Sideway Filter (ADX/CHOP/ATR)
+    table.cell(dbg_tbl, 0, 9, "Sideway Block",   bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    _sw_lbl = sideway_blocked ? "⚠ SIDEWAY (" + f_n(adx_val) + ")" : "✓ Clear (" + f_n(adx_val) + ")"
+    table.cell(dbg_tbl, 1, 9, _sw_lbl, bgcolor=(sideway_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 9, _sw_lbl, bgcolor=(sideway_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
+
     // Swing info
-    table.cell(dbg_tbl, 0, 9, "Swing H/L",       bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
-    table.cell(dbg_tbl, 1, 9, str.tostring(math.round(swing_high,2)) + " / " + str.tostring(math.round(swing_low,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
-    table.cell(dbg_tbl, 2, 9, "Disc:" + str.tostring(math.round(discount_level,2)) + " Prem:" + str.tostring(math.round(premium_level,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 0, 10, "Swing H/L",       bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 10, str.tostring(math.round(swing_high,2)) + " / " + str.tostring(math.round(swing_low,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 10, "Disc:" + str.tostring(math.round(discount_level,2)) + " Prem:" + str.tostring(math.round(premium_level,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
 
     // EMA value
-    table.cell(dbg_tbl, 0,10, "EMA200 val",      bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
-    table.cell(dbg_tbl, 1,10, str.tostring(math.round(ema_line,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
-    table.cell(dbg_tbl, 2,10, "Close: " + str.tostring(math.round(close,2)),        bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 0, 11, "EMA200 val",      bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 11, str.tostring(math.round(ema_line,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 11, "Close: " + str.tostring(math.round(close,2)),        bgcolor=c_na, text_color=color.white, text_size=size.tiny)
 
     // Final result
-    table.cell(dbg_tbl, 0,11, "=== READY ===",   bgcolor=c_hdr, text_color=color.white, text_size=size.small)
-    table.cell(dbg_tbl, 1,11, longCondition  ? "🟢 LONG FIRE!"  : "🔴 NO ENTRY", bgcolor=(longCondition  ? c_ok : c_no), text_color=color.white, text_size=size.small)
-    table.cell(dbg_tbl, 2,11, shortCondition ? "🟢 SHORT FIRE!" : "🔴 NO ENTRY", bgcolor=(shortCondition ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 0, 12, "=== READY ===",   bgcolor=c_hdr, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 12, longCondition  ? "🟢 LONG FIRE!"  : "🔴 NO ENTRY", bgcolor=(longCondition  ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 12, shortCondition ? "🟢 SHORT FIRE!" : "🔴 NO ENTRY", bgcolor=(shortCondition ? c_ok : c_no), text_color=color.white, text_size=size.small)
 
     // CHoCH bar remaining
     int bear_remaining = choch_bear ? choch_max_bars - (bar_index - choch_bear_bar) : 0
     int bull_remaining = choch_bull ? choch_max_bars - (bar_index - choch_bull_bar) : 0
-    table.cell(dbg_tbl, 0,12, "CHoCH Expire",    bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
-    table.cell(dbg_tbl, 1,12, choch_bear ? "⏳ " + str.tostring(bear_remaining) + " bars left" : "-", bgcolor=(choch_bear ? c_no : c_na), text_color=color.white, text_size=size.tiny)
-    table.cell(dbg_tbl, 2,12, choch_bull ? "⏳ " + str.tostring(bull_remaining) + " bars left" : "-", bgcolor=(choch_bull ? c_no : c_na), text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 0, 13, "CHoCH Expire",    bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 13, choch_bear ? "⏳ " + str.tostring(bear_remaining) + " bars left" : "-", bgcolor=(choch_bear ? c_no : c_na), text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 13, choch_bull ? "⏳ " + str.tostring(bull_remaining) + " bars left" : "-", bgcolor=(choch_bull ? c_no : c_na), text_color=color.white, text_size=size.tiny)
 
+// ==========================================
+// Execution & Risk Management
 // ==========================================
 // Execution & Risk Management
 // ==========================================
@@ -598,6 +664,22 @@ be_val  = be_pips  * syminfo.mintick
 t1_val  = trail1_pips * syminfo.mintick
 lk_val  = lock1_pips  * syminfo.mintick
 
+// Minimum valid order quantity for TradingView symbol (prevents silent rejection when mincontract > fixed_lot)
+calc_qty = math.max(fixed_lot, syminfo.mincontract)
+
+// ==========================================
+// [TEST MODE] Bare-minimum entry — โดยไม่ผ่าน risk check, ไม่มี function call
+// ==========================================
+if test_mode
+    _sl_offset = 50 * syminfo.mintick * 100  // $50 offset
+    _tp_offset = 200 * syminfo.mintick * 100 // $200 offset
+    if longCondition
+        strategy.entry("Buy", strategy.long,  qty=calc_qty)
+        strategy.exit("XBuy",  "Buy",  stop=close - _sl_offset, limit=close + _tp_offset)
+    if shortCondition
+        strategy.entry("Sell", strategy.short, qty=calc_qty)
+        strategy.exit("XSell", "Sell", stop=close + _sl_offset, limit=close - _tp_offset)
+
 if longCondition
     sl_price   = use_fixed_sl ? (close - (fixed_sl_pips * syminfo.mintick)) : (nz(swing_low, close - (max_sl_pips * syminfo.mintick)) - sl_buffer)
     risk       = close - sl_price
@@ -607,7 +689,7 @@ if longCondition
         sl_price := close - max_sl_val
     if risk > 0
         tp_price         = close + tp_val
-        strategy.entry("Buy", strategy.long, qty=fixed_lot)
+        strategy.entry("Buy", strategy.long, qty=calc_qty)
         t_entry_long     := close
         t_sl_long        := sl_price
         t_tp_long        := tp_price
@@ -615,7 +697,7 @@ if longCondition
         sid_long         := s
         is_entering_long := true
         zone_tag         = in_bull_fvg ? "FVG" : in_bull_ob ? "OB" : "PD"
-        alert(f_open("BUY", close, sl_price, tp_price, s, fixed_lot, be_pips, trail1_pips, lock1_pips, tp_pips), alert.freq_once_per_bar_close)
+        alert(f_open("BUY", close, sl_price, tp_price, s, calc_qty, be_pips, trail1_pips, lock1_pips, tp_pips), alert.freq_once_per_bar_close)
 
 if shortCondition
     sl_price   = use_fixed_sl ? (close + (fixed_sl_pips * syminfo.mintick)) : (nz(swing_high, close + (max_sl_pips * syminfo.mintick)) + sl_buffer)
@@ -626,14 +708,14 @@ if shortCondition
         sl_price := close + max_sl_val
     if risk > 0
         tp_price          = close - tp_val
-        strategy.entry("Sell", strategy.short, qty=fixed_lot)
+        strategy.entry("Sell", strategy.short, qty=calc_qty)
         t_entry_short     := close
         t_sl_short        := sl_price
         t_tp_short        := tp_price
         s                 = str.tostring(time) + "_SELL"
         sid_short         := s
         is_entering_short := true
-        alert(f_open("SELL", close, sl_price, tp_price, s, fixed_lot, be_pips, trail1_pips, lock1_pips, tp_pips), alert.freq_once_per_bar_close)
+        alert(f_open("SELL", close, sl_price, tp_price, s, calc_qty, be_pips, trail1_pips, lock1_pips, tp_pips), alert.freq_once_per_bar_close)
 
 // ==========================================
 // Scaled Breakeven & Trailing
