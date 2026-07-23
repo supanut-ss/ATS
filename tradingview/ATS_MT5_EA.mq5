@@ -23,9 +23,9 @@ input int      InpSlippage             = 30;
 input int      InpMagic                = 88188;
 
 input group "== Algorithm Settings (Pure Structure + Liquidity/CHoCH/BOS/FVG/OB) =="
-input int      InpPivotLength          = 3;
+input int      InpPivotLength          = 5;
 input double   InpSLBuffer             = 1.0;
-input int      InpMaxSLPips            = 1000;
+input int      InpMaxSLPips            = 10000;
 input double   InpPDThreshold          = 0.618;
 
 enum ENUM_ENTRY_MODE {
@@ -38,10 +38,16 @@ input ENUM_ENTRY_MODE InpEntryMode = ENTRY_MODE_DISCOUNT_ONLY;
 
 input group "== Scalping Risk =="
 input bool     InpUseFixedSL           = true;
-input int      InpFixedSLPips          = 5000;
+input int      InpFixedSLPips          = 5000;          // Fixed SL (Points/Pips)
+
+input group "== M5 Anti Fake-PA =="
+input double   InpPABodyMin            = 0.35;         // Min Body Ratio (0.0-1.0)
+input double   InpPAWickMax            = 0.60;         // Max Wick Ratio (0.0-1.0)
+input double   InpPACloseMin           = 0.45;         // Min Close Position (0.0-1.0)
+input bool     InpPAEngulf             = true;         // Require Engulfing Close
 
 input group "== Position Sizing (Fixed 0.05 lot per trade) =="
-input double   InpFixedLot             = 0.05;
+input double   InpFixedLot             = 0.05;         // 0.05 lot in MT5 = 5 contracts in TV
 
 input group "== Trend Filters =="
 input bool     InpUseEMA               = true;
@@ -53,13 +59,23 @@ input int      InpH4EMALen             = 21;
 input bool     InpFilterCounterTrend   = false;
 
 input group "== News & Volume Filters =="
-input bool     InpUseNewsFilter        = false;         // Enable News Filter
-input string   InpNewsSession          = "1300-1400,1930-2030:23456"; // News block session (UTC)
-input string   InpNewsTimezone         = "UTC";        // News Timezone (UTC, America/New_York, Asia/Bangkok, Exchange)
+input bool     InpUseNewsFilter        = true;         // Enable News Filter
+input string   InpNewsSession          = "0300-0500,1930-2030:23456"; // News block session (UTC)
+input string   InpNewsTimezone         = "Asia/Bangkok";        // News Timezone (UTC, America/New_York, Asia/Bangkok, Exchange)
 input bool     InpUseVolFilter         = true;         // Enable Volume Spike Filter
 input double   InpVolSpikeMult         = 2.0;          // Volume Spike Multiplier
 input int      InpVolSmaLen            = 20;           // Volume SMA Length
 input int      InpVolSpikeLookback     = 3;            // Block Duration (Bars)
+
+input group "== Sideway & Range Filters =="
+input bool     InpUseADXFilter         = true;         // Enable ADX Trend Filter
+input int      InpADXLen               = 14;           // ADX Lookback Length
+input double   InpADXMinThreshold      = 20.0;         // Min ADX Threshold
+input bool     InpUseChopFilter        = true;         // Enable Choppiness Index Filter
+input int      InpChopLen              = 14;           // Choppiness Length
+input double   InpChopMaxThreshold     = 60.0;         // Max CHOP Threshold
+input bool     InpUseATRFilter         = true;         // Enable ATR Squeeze Filter
+input double   InpATRMinRatio          = 0.80;         // Min ATR Ratio vs SMA(50)
 
 input group "== Breakeven & Scaled Trailing Stop =="
 input int      InpBEPips               = 5000;
@@ -71,6 +87,10 @@ input int      InpTPPips               = 20000;
 CTrade   trade;
 string   backend_url = "";
 string   auth_token  = "";
+
+//--- Indicator Handles
+int adx_handle = INVALID_HANDLE;
+int atr_handle = INVALID_HANDLE;
 
 //--- Algorithm State
 double last_ph = 0.0, last_pl = 0.0;
@@ -338,6 +358,84 @@ bool IsInSessionString(datetime time_val, string session_str)
 }
 
 //+------------------------------------------------------------------+
+//| GetATRFilterOk: Check if volatility ratio is above threshold     |
+//+------------------------------------------------------------------+
+bool GetATRFilterOk()
+{
+   if(!InpUseATRFilter) return true;
+   if(atr_handle == INVALID_HANDLE) return true;
+   double atr_buf[];
+   ArrayResize(atr_buf, 50);
+   ArraySetAsSeries(atr_buf, true);
+   if(CopyBuffer(atr_handle, 0, 1, 50, atr_buf) < 50) return true;
+   
+   double atr_14 = atr_buf[0];
+   double sum = 0.0;
+   for(int i=0; i<50; i++) sum += atr_buf[i];
+   double atr_sma_50 = sum / 50.0;
+   
+   if(atr_sma_50 > 0)
+   {
+      double atr_ratio = atr_14 / atr_sma_50;
+      return (atr_ratio >= InpATRMinRatio);
+   }
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| CalculateChoppiness: Calculate Choppiness Index (0-100)          |
+//+------------------------------------------------------------------+
+double CalculateChoppiness(int len)
+{
+   double hi_arr[], lo_arr[], cl_arr[];
+   ArraySetAsSeries(hi_arr, true);
+   ArraySetAsSeries(lo_arr, true);
+   ArraySetAsSeries(cl_arr, true);
+   
+   if(CopyHigh(Symbol(), Period(), 1, len, hi_arr) < len ||
+      CopyLow(Symbol(), Period(), 1, len, lo_arr) < len ||
+      CopyClose(Symbol(), Period(), 1, len + 1, cl_arr) < len + 1)
+      return 100.0;
+      
+   double atr_sum = 0.0;
+   double hh = hi_arr[0];
+   double ll = lo_arr[0];
+   
+   for(int i=0; i<len; i++)
+   {
+      double tr = hi_arr[i] - lo_arr[i];
+      double diff1 = MathAbs(hi_arr[i] - cl_arr[i+1]);
+      double diff2 = MathAbs(lo_arr[i] - cl_arr[i+1]);
+      if(diff1 > tr) tr = diff1;
+      if(diff2 > tr) tr = diff2;
+      atr_sum += tr;
+      
+      if(hi_arr[i] > hh) hh = hi_arr[i];
+      if(lo_arr[i] < ll) ll = lo_arr[i];
+   }
+   
+   double range = hh - ll;
+   if(range > 0)
+   {
+      double chop = 100.0 * MathLog10(atr_sum / range) / MathLog10(len);
+      return chop;
+   }
+   return 100.0;
+}
+
+//+------------------------------------------------------------------+
+//| GetADXValue: Retrieve ADX indicator value                        |
+//+------------------------------------------------------------------+
+double GetADXValue()
+{
+   if(!InpUseADXFilter) return 100.0;
+   if(adx_handle == INVALID_HANDLE) return 0.0;
+   double val[1];
+   if(CopyBuffer(adx_handle, 0, 1, 1, val) < 1) return 0.0;
+   return val[0];
+}
+
+//+------------------------------------------------------------------+
 //| IsVolumeSpikeActive: Check if there was a volume spike recently  |
 //+------------------------------------------------------------------+
 bool IsVolumeSpikeActive(int sma_len, double multiplier, int lookback_bars)
@@ -494,11 +592,42 @@ void ExecuteStrategyLogic()
    bool in_bear_fvg = fvg_bear_low>0&&fvg_bear_high>0 && lo[1]<=fvg_bear_high && hi[1]>=fvg_bear_low;
    bool in_bear_ob  = ob_bear_low>0&&ob_bear_high>0   && lo[1]<=ob_bear_high  && hi[1]>=ob_bear_low;
 
-   // 7. PA confirmation (engulfing)
-   bool bull_pa = cl[2]<op[2] && cl[1]>op[1];
-   bool bear_pa = cl[2]>op[2] && cl[1]<op[1];
+    // 7. PA confirmation (4-layer filter)
+    bool bullish_pa_raw = cl[2] < op[2] && cl[1] > op[1];
+    bool bearish_pa_raw = cl[2] > op[2] && cl[1] < op[1];
 
-   // 8. EMA filter
+    double bull_body   = cl[1] - op[1];
+    double bull_range  = hi[1] - lo[1];
+    double bear_body   = op[1] - cl[1];
+    double bear_range  = hi[1] - lo[1];
+
+    double bull_body_ratio = bull_range > 0 ? bull_body / bull_range : 0.0;
+    double bear_body_ratio = bear_range > 0 ? bear_body / bear_range : 0.0;
+
+    double bull_upper_wick = hi[1] - cl[1];
+    double bear_lower_wick = cl[1] - lo[1];
+    double bull_wick_ratio = bull_range > 0 ? bull_upper_wick / bull_range : 1.0;
+    double bear_wick_ratio = bear_range > 0 ? bear_lower_wick / bear_range : 1.0;
+
+    double bull_close_pos  = bull_range > 0 ? (cl[1] - lo[1]) / bull_range : 0.0;
+    double bear_close_pos  = bear_range > 0 ? (hi[1] - cl[1]) / bear_range : 0.0;
+
+    bool bull_engulf = !InpPAEngulf || (cl[1] > op[2]);
+    bool bear_engulf = !InpPAEngulf || (cl[1] < op[2]);
+
+    bool bull_pa = bullish_pa_raw
+                && bull_body_ratio >= InpPABodyMin
+                && bull_wick_ratio  <= InpPAWickMax
+                && bull_close_pos   >= InpPACloseMin
+                && bull_engulf;
+
+    bool bear_pa = bearish_pa_raw
+                && bear_body_ratio >= InpPABodyMin
+                && bear_wick_ratio  <= InpPAWickMax
+                && bear_close_pos   >= InpPACloseMin
+                && bear_engulf;
+
+    // 8. EMA filter
    bool ema_lc=true, ema_sc=true;
    if(InpUseEMA)
    {
@@ -556,8 +685,34 @@ void ExecuteStrategyLogic()
        }
     }
     
-    bool longCond  = (trend==1)  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked;
-    bool shortCond = (trend==-1) && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked;
+    // Sideway & Range Filters
+    bool sideway_blocked = false;
+    if(InpUseADXFilter)
+    {
+       double adx = GetADXValue();
+       if(adx < InpADXMinThreshold)
+       {
+          sideway_blocked = true;
+       }
+    }
+    if(!sideway_blocked && InpUseChopFilter)
+    {
+       double chop = CalculateChoppiness(InpChopLen);
+       if(chop > InpChopMaxThreshold)
+       {
+          sideway_blocked = true;
+       }
+    }
+    if(!sideway_blocked && InpUseATRFilter)
+    {
+       if(!GetATRFilterOk())
+       {
+          sideway_blocked = true;
+       }
+    }
+
+    bool longCond  = (trend==1)  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked && !sideway_blocked;
+    bool shortCond = (trend==-1) && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked && !sideway_blocked;
 
    double pt   = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
    double tp_v = InpTPPips * pt;
@@ -689,6 +844,19 @@ int OnInit()
    auth_token=InpAuthToken;
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints(InpSlippage);
+   
+   // Initialize Indicators
+   if(InpUseADXFilter)
+   {
+      adx_handle = iADX(Symbol(), Period(), InpADXLen);
+      if(adx_handle == INVALID_HANDLE) { Print("ATS EA ERROR: Failed to create ADX handle"); return(INIT_FAILED); }
+   }
+   if(InpUseATRFilter)
+   {
+      atr_handle = iATR(Symbol(), Period(), 14);
+      if(atr_handle == INVALID_HANDLE) { Print("ATS EA ERROR: Failed to create ATR handle"); return(INIT_FAILED); }
+   }
+   
    InitStateFromHistory();
    InitTrackedPositions();
    EventSetMillisecondTimer(InpPollInterval);
@@ -697,7 +865,13 @@ int OnInit()
    return(INIT_SUCCEEDED);
 }
 
-void OnDeinit(const int reason) { EventKillTimer(); Print("ATS EA: Deinitialized."); }
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   if(adx_handle != INVALID_HANDLE) IndicatorRelease(adx_handle);
+   if(atr_handle != INVALID_HANDLE) IndicatorRelease(atr_handle);
+   Print("ATS EA: Deinitialized.");
+}
 
 void OnTick()
 {

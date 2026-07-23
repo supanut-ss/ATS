@@ -10,13 +10,14 @@ strategy(
      commission_type     = strategy.commission.cash_per_contract,
      commission_value    = 0.035,
      slippage            = 3,
-     max_lines_count     = 500
+     max_lines_count     = 500,
+     calc_on_every_tick  = true
  )
 
 // ==========================================
 // 1. Inputs
 // ==========================================
-pivot_length  = input.int(3,  title="Pivot Lookback Length", minval=1)
+pivot_length  = input.int(5,  title="Pivot Lookback Length", minval=1)
 sl_buffer     = input.float(1.0, title="SL Buffer (USD)")
 max_sl_pips   = input.int(1000,  title="Max Structural SL (Pips/Points)")
 pd_threshold  = input.float(0.618, title="Premium/Discount Fib Threshold", minval=0.1, maxval=0.75, step=0.05)
@@ -35,7 +36,7 @@ grp_pa       = "== M5 Anti Fake-PA =="
 pa_body_min  = input.float(0.35, title="Min Body Ratio (0.0–1.0)",   minval=0.1, maxval=0.9, step=0.05, group=grp_pa, tooltip="body ของแท่ง PA ต้องใหญ่กว่า X% ของ range | 0.35=35% เหมาะสำหรับ M5 XAUUSD")
 pa_wick_max  = input.float(0.60, title="Max Wick Ratio (0.0–1.0)",   minval=0.0, maxval=0.9, step=0.05, group=grp_pa, tooltip="wick ด้านที่สวนทางต้องไม่เกิน X% | 0.60=60% ป้องกัน rejection candle เขียวจัด")
 pa_close_min = input.float(0.45, title="Min Close Position (0.0–1.0)",minval=0.1, maxval=0.9, step=0.05, group=grp_pa, tooltip="close ต้องอยู่ในช่วงบน/ล่าง X% ของ range | 0.45=45% เหมาะสำหรับ M5 XAUUSD")
-pa_engulf    = input.bool(false, title="Require Engulfing Close",                              group=grp_pa, tooltip="bullish: close ต้องปิดเหนือ open[1] | เปิด = เข้มสุดบน M5")
+pa_engulf    = input.bool(true, title="Require Engulfing Close",                              group=grp_pa, tooltip="bullish: close ต้องปิดเหนือ open[1] | เปิด = เข้มสุดบน M5")
 bos_max_bars   = input.int(3,    title="Pending BOS Expiry (Bars)",   minval=1, maxval=10,  group=grp_pa, tooltip="Pending BOS จะถูกยกเลิกอัตโนมัติถ้าไม่ยืนยันภายใน N bar")
 choch_max_bars = input.int(20,   title="CHoCH Block Expiry (Bars)",   minval=5, maxval=100, group=grp_pa, tooltip="CHoCH flag จะหมดอายุอัตโนมัติหลัง N bar (M5: 20 bar = 100นาที)")
 
@@ -47,7 +48,7 @@ show_bar_debug = input.bool(false, title="[TEST] Show Bar Labels",  group=grp_de
 
 // --- Position Sizing ---
 grp_risk  = "== Position Sizing =="
-fixed_lot = input.float(0.05, title="Fixed Lot (0.05)", minval=0.01, step=0.01, group=grp_risk)
+fixed_lot = input.float(5.0, title="Fixed Lot (0.05)", minval=0.01, step=0.01, group=grp_risk)
 
 // --- Scaled TP/BE/Trail ---
 grp_exit    = "== Exit Management =="
@@ -62,7 +63,7 @@ tp_pips     = input.int(2000,  title="Hard TP (Points from entry)", group=grp_ex
 
 // --- Trend Filters ---
 grp_trend            = "== Trend Filters =="
-use_ema              = input.bool(false, title="EMA 200 Filter",              group=grp_trend, tooltip="\u0e1bิด default — H1+H4 EMA กรองทิศทางอยู่แล้ว | EMA200 M5 ขยับช้า ประอัพต่อ scalping")
+use_ema              = input.bool(true, title="EMA 200 Filter",              group=grp_trend, tooltip="เปิด default — H1+H4 EMA กรองทิศทางอยู่แล้ว | EMA200 M5 ขยับช้า ประอัพต่อ scalping")
 ema_length           = input.int(200,    title="EMA Length",                 group=grp_trend)
 ema_buffer_pips      = input.int(50,     title="EMA Buffer (pips tolerance)",group=grp_trend, tooltip="ถ้าเปิด EMA200 filter ให้เพิ่ม buffer นี้เพื่อไม่ให้ EMA block เมื่อราคาอยู่ใกล้ EMA มาก (50 pip = $0.05 XAUUSD)")
 use_h1_trend         = input.bool(true,  title="H1 EMA Filter",              group=grp_trend)
@@ -73,11 +74,11 @@ filter_counter_trend = input.bool(false, title="Block Counter-Trend trades", gro
 
 // --- News & Volume Filters ---
 grp_news_vol       = "== News & Volume Filters =="
-use_news_filter    = input.bool(false, title="Enable News Filter", group=grp_news_vol, tooltip="งดเข้าไม้ในช่วงเวลาที่มีข่าวสำคัญ")
-news_session       = input.session("1300-1400,1930-2030:23456", title="News Block Session (UTC)", group=grp_news_vol, tooltip="เวลาที่จะงดเข้าเทรด (รูปแบบ hhmm-hhmm:days โดย 2-6 คือ จันทร์-ศุกร์, คั่นด้วยลูกน้ำได้)")
-news_timezone      = input.string("UTC", title="News Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_news_vol)
+use_news_filter    = input.bool(true, title="Enable News Filter", group=grp_news_vol, tooltip="งดเข้าไม้ในช่วงเวลาที่มีข่าวสำคัญ")
+news_session       = input.session("0300-0500:23456", title="News Block Session (UTC)", group=grp_news_vol, tooltip="เวลาที่จะงดเข้าเทรด (รูปแบบ hhmm-hhmm:days โดย 2-6 คือ จันทร์-ศุกร์, คั่นด้วยลูกน้ำได้)")
+news_timezone      = input.string("Asia/Bangkok", title="News Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_news_vol)
 
-use_vol_filter     = input.bool(false, title="Enable Volume Spike Filter", group=grp_news_vol, tooltip="ปิด default — XAUUSD หลายเบรกเกอร์ไม่มีข้อมูล Volume ที่เชื่อถือได้ | เปิดถ้าใช้กับ Futures หรือ Stock")
+use_vol_filter     = input.bool(true, title="Enable Volume Spike Filter", group=grp_news_vol, tooltip="ปิด default — XAUUSD หลายเบรกเกอร์ไม่มีข้อมูล Volume ที่เชื่อถือได้ | เปิดถ้าใช้กับ Futures หรือ Stock")
 vol_spike_mult     = input.float(2.0, title="Volume Spike Multiplier", minval=1.1, step=0.1, group=grp_news_vol, tooltip="จำนวนเท่าของ Volume เฉลี่ยที่ถือว่าเป็น Volume Spike")
 vol_sma_len        = input.int(20, title="Volume SMA Length", minval=5, group=grp_news_vol, tooltip="จำนวนแท่งเทียนที่ใช้อ้างอิงหาค่าเฉลี่ย Volume")
 vol_spike_lookback = input.int(3, title="Block Duration (Bars)", minval=1, group=grp_news_vol, tooltip="จำนวนแท่งเทียนที่จะงดเข้าเทรดหลังจากเกิด Volume Spike (1 = เฉพาะแท่งที่เกิด, 3 = แท่งที่เกิด + 2 แท่งถัดไป)")
@@ -88,11 +89,11 @@ use_adx_filter     = input.bool(true,  title="Enable ADX Trend Filter",       gr
 adx_len            = input.int(14,     title="ADX Lookback Length",           minval=5, group=grp_sideway)
 adx_min_threshold  = input.float(20.0, title="Min ADX Threshold",            minval=10.0, maxval=40.0, step=1.0, group=grp_sideway, tooltip="ถ้า ADX น้อยกว่าค่านี้ (เช่น 20.0) แสดงว่าตลาดเป็น Sideway จะบล็อกการเข้าไม้เพื่อลด Drawdown")
 
-use_chop_filter    = input.bool(false, title="Enable Choppiness Index Filter", group=grp_sideway, tooltip="กรองช่วงตลาดแกว่งตัวไร้ทิศทาง (CHOP > Threshold จะงดเข้าเทรด)")
+use_chop_filter    = input.bool(true, title="Enable Choppiness Index Filter", group=grp_sideway, tooltip="กรองช่วงตลาดแกว่งตัวไร้ทิศทาง (CHOP > Threshold จะงดเข้าเทรด)")
 chop_len           = input.int(14,     title="Choppiness Length",            minval=5, group=grp_sideway)
 chop_max_threshold = input.float(60.0, title="Max CHOP Threshold (0-100)",     minval=40.0, maxval=80.0, step=1.0, group=grp_sideway, tooltip="ค่า CHOP ยิ่งสูง (>55-60) แสดงว่าราคาแกว่งตัวผันผวนไร้เทรนด์")
 
-use_atr_filter     = input.bool(false, title="Enable ATR Volatility Squeeze Filter", group=grp_sideway, tooltip="งดเทรดช่วงสภาวะราคาซบเซา Volatility ต่ำผิดปกติ")
+use_atr_filter     = input.bool(true, title="Enable ATR Volatility Squeeze Filter", group=grp_sideway, tooltip="งดเทรดช่วงสภาวะราคาซบเซา Volatility ต่ำผิดปกติ")
 atr_min_ratio      = input.float(0.80, title="Min ATR Ratio vs SMA(50)",      minval=0.5, maxval=1.5, step=0.05, group=grp_sideway, tooltip="ATR(14) ต้องไม่ต่ำกว่า X% ของ ATR SMA(50)")
 
 // -- Webhook --
