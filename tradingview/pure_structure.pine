@@ -61,6 +61,11 @@ lock1_pips  = input.int(500,   title="Trail Level1 lock offset (Points)", group=
 tp_pips     = input.int(2000,  title="Hard TP (Points from entry)", group=grp_exit,
               tooltip="TP อัตโนมัติที่ $20.00 (2000 point) จากจุดเข้า (เช่น Entry 4000 -> TP 4020)")
 
+// --- Force Close Time ---
+use_force_close     = input.bool(true, title="Enable Force Close Time", group=grp_exit, tooltip="บังคับปิดไม้ทั้งหมดที่เปิดอยู่เมื่อถึงเวลาที่กำหนด")
+force_close_session = input.session("0400-0405:23456", title="Force Close Session", group=grp_exit, tooltip="เวลาที่จะบังคับปิดไม้ทั้งหมด (รูปแบบ hhmm-hhmm:days โดย 2-6 คือ จันทร์-ศุกร์, คั่นด้วยลูกน้ำได้)")
+force_close_tz      = input.string("Asia/Bangkok", title="Force Close Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_exit)
+
 // --- Trend Filters ---
 grp_trend            = "== Trend Filters =="
 use_ema              = input.bool(true, title="EMA 200 Filter",              group=grp_trend, tooltip="เปิด default — H1+H4 EMA กรองทิศทางอยู่แล้ว | EMA200 M5 ขยับช้า ประอัพต่อ scalping")
@@ -500,6 +505,9 @@ sideway_blocked = (use_adx_filter and not adx_ok) or (use_chop_filter and not ch
 // Visual for Sideway Block
 bgcolor(sideway_blocked ? color.new(color.blue, 94) : na, title="Sideway Filter Block Active")
 
+// --- Force Close Time Check ---
+in_force_close_time = use_force_close and not na(time(timeframe.period, force_close_session, force_close_tz == "Exchange" ? syminfo.timezone : force_close_tz))
+
 // ==========================================
 // Final Entry Conditions
 // ==========================================
@@ -513,8 +521,8 @@ bool shortCondition = false
 if test_mode
     // [TEST MODE] เข้าทุก bar ที่ trend == 1/-1 (ไม่ต้องรอ PA/Zone)
     // ถ้ายังไม่ออก = BOS/trend ไม่ทำงาน ไม่ใช่ filter ปัญหา
-    longCondition  := trend == 1  and strategy.position_size == 0
-    shortCondition := trend == -1 and strategy.position_size == 0
+    longCondition  := trend == 1  and strategy.position_size == 0 and not in_force_close_time
+    shortCondition := trend == -1 and strategy.position_size == 0 and not in_force_close_time
 else
     // Normal mode: trend + PA + optional guards
     _long_base  = trend == 1  and bullish_pa and strategy.position_size == 0
@@ -529,8 +537,8 @@ else
     _long_choch  = not choch_bear
     _short_choch = not choch_bull
 
-    longCondition  := _long_base  and _long_zone  and _long_ema  and long_trend_ok  and not filter_blocked and not sideway_blocked and _long_choch
-    shortCondition := _short_base and _short_zone and _short_ema and short_trend_ok and not filter_blocked and not sideway_blocked and _short_choch
+    longCondition  := _long_base  and _long_zone  and _long_ema  and long_trend_ok  and not filter_blocked and not sideway_blocked and _long_choch and not in_force_close_time
+    shortCondition := _short_base and _short_zone and _short_ema and short_trend_ok and not filter_blocked and not sideway_blocked and _short_choch and not in_force_close_time
 
 // Bar labels สำหรับ diagnose (เปิดด้วย show_bar_debug)
 if show_bar_debug
@@ -608,8 +616,10 @@ if show_debug and barstate.islast
 
     // News/Vol filter
     table.cell(dbg_tbl, 0, 8, "Filter Block",    bgcolor=c_na,  text_color=color.white, text_size=size.small)
-    table.cell(dbg_tbl, 1, 8, filter_blocked ? "⚠ NEWS/VOL" : "✓ Clear", bgcolor=(filter_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
-    table.cell(dbg_tbl, 2, 8, filter_blocked ? "⚠ NEWS/VOL" : "✓ Clear", bgcolor=(filter_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
+    _filter_lbl = filter_blocked ? "⚠ NEWS/VOL" : in_force_close_time ? "⚠ TIME CLOSE" : "✓ Clear"
+    _filter_bg  = (filter_blocked or in_force_close_time) ? c_no : c_ok
+    table.cell(dbg_tbl, 1, 8, _filter_lbl, bgcolor=_filter_bg, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 8, _filter_lbl, bgcolor=_filter_bg, text_color=color.white, text_size=size.small)
 
     // Sideway Filter (ADX/CHOP/ATR)
     table.cell(dbg_tbl, 0, 9, "Sideway Block",   bgcolor=c_na,  text_color=color.white, text_size=size.small)
@@ -764,6 +774,10 @@ if strategy.position_size > 0 and not na(t_sl_long) and not na(t_tp_long)
 
 if strategy.position_size < 0 and not na(t_sl_short) and not na(t_tp_short)
     strategy.exit("Exit Sell", "Sell", stop=t_sl_short, limit=t_tp_short)
+
+// Force close at specific time
+if in_force_close_time
+    strategy.close_all(comment="Force Close at 4 AM")
 
 if pos_closed_long and not is_entering_long
     t_entry_long  := na

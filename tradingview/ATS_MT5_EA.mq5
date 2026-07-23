@@ -83,6 +83,11 @@ input int      InpTrailLevel1Pips      = 10000;
 input int      InpTrailLevel1LockPips  = 5000;
 input int      InpTPPips               = 20000;
 
+input group "== Force Close Settings =="
+input bool     InpUseForceClose        = true;                  // Enable Force Close Time
+input string   InpForceCloseSession    = "0400-0405:23456";     // Force Close Session (hhmm-hhmm:days)
+input string   InpForceCloseTimezone   = "Asia/Bangkok";        // Force Close Timezone (UTC, America/New_York, Asia/Bangkok, Exchange)
+
 //--- Global Variables
 CTrade   trade;
 string   backend_url = "";
@@ -139,6 +144,28 @@ int GetPositionCount()
    for(int i = PositionsTotal()-1; i >= 0; i--)
       if(PositionGetSymbol(i) == Symbol() && PositionGetInteger(POSITION_MAGIC) == InpMagic) c++;
    return c;
+}
+
+void ForceCloseAllPositions()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != Symbol()) continue;
+      
+      Print("ATS EA: Force Closing position #", ticket, " due to Force Close Time.");
+      if(trade.PositionClose(ticket))
+      {
+         Print("ATS EA: Position #", ticket, " closed successfully.");
+      }
+      else
+      {
+         Print("ATS EA ERROR: Failed to close position #", ticket, " error=", GetLastError());
+      }
+   }
 }
 
 void AddTrackedPosition(ulong t, string sym, string act, double vol, double op, double sl, double tp)
@@ -711,8 +738,16 @@ void ExecuteStrategyLogic()
        }
     }
 
-    bool longCond  = (trend==1)  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked && !sideway_blocked;
-    bool shortCond = (trend==-1) && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked && !sideway_blocked;
+    bool in_force_close = false;
+    if(InpUseForceClose)
+    {
+       datetime time_in_tz = GetTimeInTimezone(InpForceCloseTimezone);
+       if(IsInSessionString(time_in_tz, InpForceCloseSession))
+          in_force_close = true;
+    }
+
+    bool longCond  = (trend==1)  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close;
+    bool shortCond = (trend==-1) && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close;
 
    double pt   = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
    double tp_v = InpTPPips * pt;
@@ -877,6 +912,17 @@ void OnTick()
 {
    CheckBEAndTrailing();
    SyncPositionsWithBackend();
+   
+   // Force Close Check
+   if(InpUseForceClose)
+   {
+      datetime time_in_tz = GetTimeInTimezone(InpForceCloseTimezone);
+      if(IsInSessionString(time_in_tz, InpForceCloseSession))
+      {
+         ForceCloseAllPositions();
+      }
+   }
+   
    if(IsNewBar()) ExecuteStrategyLogic();
 }
 
