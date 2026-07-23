@@ -58,6 +58,8 @@ trail1_pips = input.int(1000,  title="Trail Level1 trigger (Points)", group=grp_
               tooltip="เมื่อกำไรถึง $10.00 (1000 point) ให้เริ่ม Trailing SL")
 lock1_pips  = input.int(500,   title="Trail Level1 lock offset (Points)", group=grp_exit,
               tooltip="ล็อกกำไรขั้นต่ำ $5.00 (500 point) เมื่อถึง Trail Level1")
+use_stepped_trail  = input.bool(true, title="Use Stepped Trailing", group=grp_exit,
+              tooltip="เปิด = ขยับล็อกกำไรทีละขั้นตามราคา (แบบที่ 2) | ปิด = ล็อกกำไรคงที่ที่ระดับที่กำหนดเท่านั้น (แบบที่ 1)")
 tp_pips     = input.int(2000,  title="Hard TP (Points from entry)", group=grp_exit,
               tooltip="TP อัตโนมัติที่ $20.00 (2000 point) จากจุดเข้า (เช่น Entry 4000 -> TP 4020)")
 
@@ -747,6 +749,10 @@ if strategy.position_size > 0
     new_sl = t_sl_long
     if profit_d >= t1_val
         locked  = ep + lk_val
+        if use_stepped_trail
+            step_multiplier = math.floor(profit_d / lk_val)
+            locked_profit = (step_multiplier - 1) * lk_val
+            locked := ep + locked_profit
         new_sl := na(new_sl) ? locked : math.max(new_sl, locked)
     else if profit_d >= be_val
         be_locked = ep + (10 * syminfo.mintick)  // Offset 10 pips to cover commission/slippage so it's not a loss
@@ -760,6 +766,10 @@ if strategy.position_size < 0
     new_sl = t_sl_short
     if profit_d >= t1_val
         locked  = ep - lk_val
+        if use_stepped_trail
+            step_multiplier = math.floor(profit_d / lk_val)
+            locked_profit = (step_multiplier - 1) * lk_val
+            locked := ep - locked_profit
         new_sl := na(new_sl) ? locked : math.min(new_sl, locked)
     else if profit_d >= be_val
         be_locked = ep - (10 * syminfo.mintick)  // Offset 10 pips to cover commission/slippage

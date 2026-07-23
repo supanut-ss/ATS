@@ -81,6 +81,7 @@ input group "== Breakeven & Scaled Trailing Stop =="
 input int      InpBEPips               = 5000;
 input int      InpTrailLevel1Pips      = 10000;
 input int      InpTrailLevel1LockPips  = 5000;
+input bool     InpUseSteppedTrail      = true;                  // Use Stepped Trailing (true=Stepped, false=Static)
 input int      InpTPPips               = 20000;
 
 input group "== Force Close Settings =="
@@ -837,10 +838,16 @@ void CheckBEAndTrailing()
          double pk = GlobalVariableCheck(gk)?GlobalVariableGet(gk):ep;
          if(cur>pk) { pk=cur; GlobalVariableSet(gk,pk); }
          double pd = pk-ep;
-         if(pd>=t1_d)         // Level 2: lock at entry+500
+         if(pd>=t1_d)         // Level 2 Trailing Stop
          {
-            double ls=ep+lk_d;
-            if(nsl<ls) { nsl=ls; mod=true; Print("ATS BUY #",tk," L2-Trail SL=",nsl); }
+            double ls = ep + lk_d;
+            if(InpUseSteppedTrail)
+            {
+               double step_multiplier = MathFloor(pd / lk_d);
+               double locked_profit = (step_multiplier - 1.0) * lk_d;
+               ls = ep + locked_profit;
+            }
+            if(nsl<ls) { nsl=ls; mod=true; Print("ATS BUY #",tk," Trail SL=",nsl); }
          }
          else if(pd>=be_d)    // Level 1: breakeven
          {
@@ -855,10 +862,16 @@ void CheckBEAndTrailing()
          double tr = GlobalVariableCheck(gk)?GlobalVariableGet(gk):ep;
          if(cur<tr) { tr=cur; GlobalVariableSet(gk,tr); }
          double pd = ep-tr;
-         if(pd>=t1_d)         // Level 2: lock at entry-500
+         if(pd>=t1_d)         // Level 2 Trailing Stop
          {
-            double ls=ep-lk_d;
-            if(sl==0.0||nsl>ls) { nsl=ls; mod=true; Print("ATS SELL #",tk," L2-Trail SL=",nsl); }
+            double ls = ep - lk_d;
+            if(InpUseSteppedTrail)
+            {
+               double step_multiplier = MathFloor(pd / lk_d);
+               double locked_profit = (step_multiplier - 1.0) * lk_d;
+               ls = ep - locked_profit;
+            }
+            if(sl==0.0||nsl>ls) { nsl=ls; mod=true; Print("ATS SELL #",tk," Trail SL=",nsl); }
          }
          else if(pd>=be_d)    // Level 1: breakeven
          {
