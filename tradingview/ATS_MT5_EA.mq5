@@ -13,20 +13,20 @@
 
 //--- Input Parameters
 input group "== Webhook Connection Settings =="
-input bool     InpEnableWebhookPolling = false;
-input string   InpBackendURL           = "https://ats.thaipesleague.com";
-input string   InpAuthToken            = "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f";
-input int      InpPollInterval         = 10000;
+input bool     InpEnableWebhookPolling = false;                 // เปิดใช้งานการดึงสัญญาณการเทรดผ่าน Webhook
+input string   InpBackendURL           = "https://ats.thaipesleague.com"; // ลิงก์ API หลังบ้าน C#
+input string   InpAuthToken            = "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f"; // โทเค็นยืนยันตัวตนสำหรับดึงสัญญาณ
+input int      InpPollInterval         = 10000;                 // รอบเวลาการดึงข้อมูลจากหลังบ้าน (มิลลิวินาที)
 
 input group "== Trade Settings =="
-input int      InpSlippage             = 30;
-input int      InpMagic                = 88188;
+input int      InpSlippage             = 30;                    // ระยะ Slippage สูงสุดที่ยอมรับได้ (Points)
+input int      InpMagic                = 88188;                 // หมายเลข Magic Number ของ EA สำหรับแยกแยะออเดอร์
 
 input group "== Algorithm Settings (Pure Structure + Liquidity/CHoCH/BOS/FVG/OB) =="
-input int      InpPivotLength          = 5;
-input double   InpSLBuffer             = 1.0;
-input int      InpMaxSLPips            = 10000;
-input double   InpPDThreshold          = 0.618;
+input int      InpPivotLength          = 5;                     // จำนวนแท่งย้อนหลังสำหรับหาจุดกลับตัว Pivot
+input double   InpSLBuffer             = 1.0;                   // ระยะเผื่อของ Stop Loss จากจุดต่ำสุด/สูงสุด (Points)
+input int      InpMaxSLPips            = 10000;                 // ระยะ Stop Loss สูงสุดในโหมดคำนวณอัตโนมัติ (Points)
+input double   InpPDThreshold          = 0.618;                 // ระดับราคาเป้าหมาย Premium/Discount (ปกติ 0.618)
 
 enum ENUM_ENTRY_MODE {
    ENTRY_MODE_DISCOUNT_ONLY = 0, // Discount/Premium Only (Original 54% WR)
@@ -34,60 +34,60 @@ enum ENUM_ENTRY_MODE {
    ENTRY_MODE_STRICT_ICT = 2     // FVG/OB Inside Discount/Premium (Strict ICT)
 };
 input group "== Entry Logic =="
-input ENUM_ENTRY_MODE InpEntryMode = ENTRY_MODE_DISCOUNT_ONLY;
+input ENUM_ENTRY_MODE InpEntryMode = ENTRY_MODE_DISCOUNT_ONLY;  // โหมดการเข้าซื้อขาย (Discount, FVG, Strict ICT)
 
 input group "== Scalping Risk =="
-input bool     InpUseFixedSL           = true;
-input int      InpFixedSLPips          = 5000;          // Fixed SL (Points/Pips)
+input bool     InpUseFixedSL           = true;                  // เปิดใช้งานการตั้งค่า Stop Loss แบบคงที่
+input int      InpFixedSLPips          = 5000;                  // ระยะ Stop Loss แบบคงที่ (Points)
 
 input group "== M5 Anti Fake-PA =="
-input double   InpPABodyMin            = 0.35;         // Min Body Ratio (0.0-1.0)
-input double   InpPAWickMax            = 0.60;         // Max Wick Ratio (0.0-1.0)
-input double   InpPACloseMin           = 0.45;         // Min Close Position (0.0-1.0)
-input bool     InpPAEngulf             = true;         // Require Engulfing Close
+input double   InpPABodyMin            = 0.35;                  // อัตราส่วนเนื้อเทียนขั้นต่ำสำหรับยืนยัน Price Action
+input double   InpPAWickMax            = 0.60;                  // อัตราส่วนไส้เทียนสูงสุดสำหรับยืนยัน Price Action
+input double   InpPACloseMin           = 0.45;                  // สัดส่วนตําแหน่งราคาปิดเทียนขั้นต่ำสำหรับคอนเฟิร์ม
+input bool     InpPAEngulf             = true;                  // บังคับให้เกิดแท่งกลืนกิน (Engulfing Close)
 
 input group "== Position Sizing (Fixed 0.05 lot per trade) =="
-input double   InpFixedLot             = 0.05;         // 0.05 lot in MT5 = 5 contracts in TV
+input double   InpFixedLot             = 0.05;                  // ปริมาณล็อตในการเปิดออเดอร์แต่ละครั้ง
 
 input group "== Trend Filters =="
-input bool     InpUseEMA               = true;
-input int      InpEMALength            = 200;
-input bool     InpUseH1Trend           = true;
-input int      InpH1EMALen             = 21;
-input bool     InpUseH4Trend           = true;
-input int      InpH4EMALen             = 21;
-input bool     InpFilterCounterTrend   = false;
+input bool     InpUseEMA               = true;                  // เปิดใช้งานตัวกรองเทรนด์ด้วยเส้น EMA 200 (M5)
+input int      InpEMALength            = 200;                   // ความยาวเส้น EMA ไทม์เฟรมหลัก
+input bool     InpUseH1Trend           = true;                  // เปิดใช้งานตัวกรองเทรนด์ของไทม์เฟรม H1 (EMA 21)
+input int      InpH1EMALen             = 21;                    // ความยาวเส้น EMA ในไทม์เฟรม H1
+input bool     InpUseH4Trend           = true;                  // เปิดใช้งานตัวกรองเทรนด์ของไทม์เฟรม H4 (EMA 21)
+input int      InpH4EMALen             = 21;                    // ความยาวเส้น EMA ในไทม์เฟรม H4
+input bool     InpFilterCounterTrend   = false;                 // ปฏิเสธการเข้าเทรดหากสวนเทรนด์หลัก H1/H4
 
 input group "== News & Volume Filters =="
-input bool     InpUseNewsFilter        = true;         // Enable News Filter
-input string   InpNewsSession          = "0300-0500,1930-2030:23456"; // News block session (UTC)
-input string   InpNewsTimezone         = "Asia/Bangkok";        // News Timezone (UTC, America/New_York, Asia/Bangkok, Exchange)
-input bool     InpUseVolFilter         = true;         // Enable Volume Spike Filter
-input double   InpVolSpikeMult         = 2.0;          // Volume Spike Multiplier
-input int      InpVolSmaLen            = 20;           // Volume SMA Length
-input int      InpVolSpikeLookback     = 3;            // Block Duration (Bars)
+input bool     InpUseNewsFilter        = true;                  // เปิดใช้งานตัวกรองงดเทรดในช่วงเวลาข่าว
+input string   InpNewsSession          = "0300-0500,1930-2030:23456"; // ช่วงเวลาที่บล็อกไม่ให้เทรด (UTC)
+input string   InpNewsTimezone         = "Asia/Bangkok";        // เขตเวลาสำหรับกรองข่าว (เช่น Asia/Bangkok)
+input bool     InpUseVolFilter         = true;                  // เปิดใช้งานตัวกรองปริมาณซื้อขายผิดปกติ (Volume Spike)
+input double   InpVolSpikeMult         = 2.0;                   // ตัวคูณเกณฑ์ความสูงของ Volume Spike
+input int      InpVolSmaLen            = 20;                    // ความยาว SMA สำหรับคำนวณปริมาณซื้อขายปกติ
+input int      InpVolSpikeLookback     = 3;                     // ระยะเวลาที่จะทำการบล็อกออเดอร์หลังจากเกิดสไปค์ (แท่ง)
 
 input group "== Sideway & Range Filters =="
-input bool     InpUseADXFilter         = true;         // Enable ADX Trend Filter
-input int      InpADXLen               = 14;           // ADX Lookback Length
-input double   InpADXMinThreshold      = 20.0;         // Min ADX Threshold
-input bool     InpUseChopFilter        = true;         // Enable Choppiness Index Filter
-input int      InpChopLen              = 14;           // Choppiness Length
-input double   InpChopMaxThreshold     = 60.0;         // Max CHOP Threshold
-input bool     InpUseATRFilter         = true;         // Enable ATR Squeeze Filter
-input double   InpATRMinRatio          = 0.80;         // Min ATR Ratio vs SMA(50)
+input bool     InpUseADXFilter         = true;                  // เปิดใช้งานตัวกรองความแรงของเทรนด์ด้วย ADX
+input int      InpADXLen               = 14;                    // ความยาวอินดิเคเตอร์ ADX
+input double   InpADXMinThreshold      = 20.0;                  // ค่าความแรงเทรนด์ ADX ขั้นต่ำที่อนุญาตให้เทรด
+input bool     InpUseChopFilter        = true;                  // เปิดใช้งานตัวกรองตลาดไซด์เวย์ด้วย Choppiness Index
+input int      InpChopLen              = 14;                    // ความยาวอินดิเคเตอร์ Choppiness Index
+input double   InpChopMaxThreshold     = 60.0;                  // ค่าสูงสุดของ CHOP ที่อนุญาต (หลีกเลี่ยงไซด์เวย์จัด)
+input bool     InpUseATRFilter         = true;                  // เปิดใช้งานตัวกรองภาวะตลาดบีบตัวแรงด้วย ATR Ratio
+input double   InpATRMinRatio          = 0.80;                  // อัตราส่วนความผันผวน ATR เทียบกับเส้นเฉลี่ย 50 วัน
 
 input group "== Breakeven & Scaled Trailing Stop =="
-input int      InpBEPips               = 5000;
-input int      InpTrailLevel1Pips      = 10000;
-input int      InpTrailLevel1LockPips  = 5000;
-input bool     InpUseSteppedTrail      = true;                  // Use Stepped Trailing (true=Stepped, false=Static)
-input int      InpTPPips               = 20000;
+input int      InpBEPips               = 5000;                  // ระยะกำไรที่เริ่มเปิดใช้งานล็อคทุน Breakeven (Points)
+input int      InpTrailLevel1Pips      = 10000;                 // ระยะกำไรที่เริ่มรัน Trailing Stop เลื่อนตามราคา (Points)
+input int      InpTrailLevel1LockPips  = 5000;                  // ระยะล็อกกำไรขั้นต่ำของ Trailing Stop (Points)
+input bool     InpUseSteppedTrail      = true;                  // ใช้ Trailing Stop แบบขยับตามระยะห่าง (true) หรือแบบตายตัว (false)
+input int      InpTPPips               = 20000;                 // ระยะเป้าหมายในการปิดทำกำไรสูงสุด Take Profit (Points)
 
 input group "== Force Close Settings =="
-input bool     InpUseForceClose        = true;                  // Enable Force Close Time
-input string   InpForceCloseSession    = "0400-0405:23456";     // Force Close Session (hhmm-hhmm:days)
-input string   InpForceCloseTimezone   = "Asia/Bangkok";        // Force Close Timezone (UTC, America/New_York, Asia/Bangkok, Exchange)
+input bool     InpUseForceClose        = true;                  // เปิดใช้งานระบบปิดออเดอร์ทั้งหมดโดยบังคับตามเวลา
+input string   InpForceCloseSession    = "0400-0405:23456";     // ช่วงเวลาที่จะปิดออเดอร์ทั้งหมดบังคับ
+input string   InpForceCloseTimezone   = "Asia/Bangkok";        // เขตเวลาสำหรับปิดออเดอร์บังคับ (เช่น Asia/Bangkok)
 
 //--- Global Variables
 CTrade   trade;

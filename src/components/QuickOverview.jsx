@@ -1,8 +1,8 @@
 import React from 'react';
 import { Box, Paper, Typography, Divider } from '@mui/material';
 import {
-  Wifi, WifiOff, AccountBalance, TrendingUp, TrendingDown,
-  SwapVert, Shield, MonetizationOn,
+  AccountBalance, AccountBalanceWallet, TrendingUp, TrendingDown,
+  SwapVert, Shield, MonetizationOn, ShowChart
 } from '@mui/icons-material';
 
 const fmt = (v, d = 2) =>
@@ -91,12 +91,6 @@ export default function QuickOverview({ connected, account, price, positions, ri
       p: { xs: 1, lg: 0 },
     }}>
       <StatCell
-        label="สถานะ MT5"
-        value={connected ? 'เชื่อมต่อแล้ว' : 'ยังไม่เชื่อมต่อ'}
-        color={connected ? '#10b981' : '#f43f5e'}
-        icon={connected ? <Wifi /> : <WifiOff />}
-      />
-      <StatCell
         label="ราคา XAUUSD"
         value={price ? `$${fmt(price.ask)}` : '—'}
         sub={price ? `Bid $${fmt(price.bid)}  ·  Spread ${fmt(price.spread, 1)} pips` : '\u00A0'}
@@ -104,21 +98,30 @@ export default function QuickOverview({ connected, account, price, positions, ri
         icon={<MonetizationOn />}
       />
       <StatCell
+        label="Balance"
+        value={account ? `$${fmt(account.balance)}` : '—'}
+        sub={account ? `#${account.login} · ${account.currency}` : 'MT5 Offline'}
+        color="#f3f4f6"
+        icon={<AccountBalanceWallet />}
+      />
+      <StatCell
         label="Equity"
         value={account ? `$${fmt(account.equity)}` : '—'}
-        sub={account ? `Balance $${fmt(account.balance)}` : '\u00A0'}
+        sub={account ? `Ratio: ${fmt(account.balance > 0 ? (account.equity / account.balance) * 100 : 0, 1)}%` : '\u00A0'}
         color="#818cf8"
         icon={<AccountBalance />}
       />
       <StatCell
         label="Free Margin"
         value={account ? `$${fmt(account.free_margin)}` : '—'}
-        sub={account ? `Margin ${fmt(account.balance > 0 ? (1 - account.free_margin / account.equity) * 100 : 0, 1)}% used` : '\u00A0'}
+        sub={account ? `Margin: ${fmt(account.balance > 0 ? (1 - account.free_margin / account.equity) * 100 : 0, 1)}% used` : '\u00A0'}
         color="#94a3b8"
+        icon={<Shield />}
       />
       <StatCell
         label="Float P/L"
         value={account ? `${pnlSign(account.profit)}$${fmt(account.profit)}` : '—'}
+        sub={account ? (account.profit >= 0 ? 'กำไรลอยตัว' : 'ขาดทุนลอยตัว') : '\u00A0'}
         color={profitColor}
         icon={account?.profit >= 0 ? <TrendingUp /> : <TrendingDown />}
       />
@@ -134,7 +137,7 @@ export default function QuickOverview({ connected, account, price, positions, ri
         value={risk ? `${pnlSign(risk.daily_pnl)}$${fmt(risk.daily_pnl)}` : '—'}
         sub={risk ? `ลิมิต -$${fmt(risk.max_daily_loss, 0)}` : '\u00A0'}
         color={dailyColor}
-        icon={<Shield />}
+        icon={<ShowChart />}
         divider={false}
       />
     </Paper>

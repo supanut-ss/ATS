@@ -13,7 +13,7 @@ const fmtPnl = (v) => {
   return (n >= 0 ? '+' : '') + '$' + Math.abs(n).toFixed(2);
 };
 
-const H = 360;
+const H = 240;
 
 export default function PositionsTable({ positions = [], onRefresh }) {
   const [modifyDialog, setModifyDialog] = useState(null);

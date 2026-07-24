@@ -1,29 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ThemeProvider, createTheme, CssBaseline, Box,
-  AppBar, Toolbar, Typography, IconButton, Drawer, List, ListItem,
-  ListItemButton, ListItemIcon, ListItemText, Badge, Chip,
-  Grid, Button, Tooltip, CircularProgress,
+  AppBar, Toolbar, Typography, IconButton, Grid, Button, Tooltip, CircularProgress,
+  Chip, Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material';
 import {
-  Dashboard as DashboardIcon,
-  SwapVert as PositionsIcon,
-  History as HistoryIcon,
-  Settings as SettingsIcon,
-  Menu as MenuIcon,
   Refresh as RefreshIcon,
   MonetizationOn,
   Webhook,
-  Toll,
+  History as HistoryIcon,
   Link as LinkIcon,
   LinkOff,
+  Close as CloseIcon,
 } from '@mui/icons-material';
-
-import AccountCard       from './components/AccountCard';
 
 import PositionsTable    from './components/PositionsTable';
 import TradeHistoryTable from './components/TradeHistoryTable';
-import ManualTradePanel  from './components/ManualTradePanel';
 import WebhookGuide      from './components/WebhookGuide';
 import SignalsTracker    from './components/SignalsTracker';
 import QuickOverview     from './components/QuickOverview';
@@ -72,20 +64,16 @@ const theme = createTheme({
   },
 });
 
-const DRAWER_WIDTH = 220;
-
-const NAV_ITEMS = [
-  { id: 'dashboard', label: 'ภาพรวม & เทรด', icon: <DashboardIcon />, desc: 'บัญชี สถิติ และการส่งคำสั่ง' },
-  { id: 'signals',   label: 'สัญญาณ',     icon: <Toll />,        desc: 'ผลลัพธ์สัญญาณ' },
-  { id: 'history',   label: 'ประวัติ',    icon: <HistoryIcon />, desc: 'ประวัติการเทรด' },
-  { id: 'settings',  label: 'คู่มือตั้งค่า', icon: <Webhook />, desc: 'Webhook & MT5' },
-];
-
 export default function App() {
-  const isTradeRoute = window.location.pathname === '/trade';
+  if (window.location.pathname === '/trade') {
+    window.location.replace('/');
+    return null;
+  }
 
-  const [page, setPage]             = useState('dashboard');
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const isTradeRoute = window.location.pathname !== '/wc2026';
+
+  const [guideOpen, setGuideOpen]     = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const [status,    setStatus]    = useState(null);
   const [account,   setAccount]   = useState(null);
@@ -141,156 +129,6 @@ export default function App() {
     setPositions([]);
   };
 
-  const currentNav = NAV_ITEMS.find(n => n.id === page);
-
-  const sidebarContent = (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: '#0d1117' }}>
-      <Toolbar sx={{ gap: 1.5, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-        <Box sx={{
-          p: 0.7, borderRadius: 1.5,
-          background: 'linear-gradient(135deg,#f59e0b,#d97706)',
-        }}>
-          <MonetizationOn sx={{ fontSize: 20, color: '#fff' }} />
-        </Box>
-        <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1, background: 'linear-gradient(90deg,#fbbf24,#f59e0b)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            XAUUSD Bot
-          </Typography>
-          <Typography variant="caption" sx={{ color: 'text.secondary' }}>Exness · Demo</Typography>
-        </Box>
-      </Toolbar>
-
-      <List sx={{ px: 1.5, pt: 1.5, flexGrow: 1 }}>
-        {NAV_ITEMS.map(item => (
-          <ListItem key={item.id} disablePadding sx={{ mb: 0.5 }}>
-            <ListItemButton
-              selected={page === item.id}
-              onClick={() => { setPage(item.id); setMobileOpen(false); }}
-              sx={{
-                borderRadius: 2,
-                py: 1.2,
-                '&.Mui-selected': {
-                  bgcolor: 'rgba(99,102,241,0.12)',
-                  borderLeft: '3px solid #6366f1',
-                  '& .MuiListItemIcon-root': { color: '#818cf8' },
-                  '& .MuiListItemText-primary': { color: '#fff', fontWeight: 700 },
-                },
-                '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' },
-              }}
-            >
-              <ListItemIcon sx={{ minWidth: 36, color: 'text.secondary' }}>
-                {item.id === 'dashboard'
-                  ? <Badge badgeContent={positions.length || null} color="primary" max={9}>
-                      {item.icon}
-                    </Badge>
-                  : item.icon}
-              </ListItemIcon>
-              <ListItemText
-                primary={item.label}
-                secondary={item.desc}
-                primaryTypographyProps={{ variant: 'body2', fontWeight: 500 }}
-                secondaryTypographyProps={{ variant: 'caption', sx: { fontSize: '0.65rem', lineHeight: 1.2 } }}
-              />
-            </ListItemButton>
-          </ListItem>
-        ))}
-      </List>
-
-      <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <Chip
-          label={connected ? '● MT5 เชื่อมต่อแล้ว' : '○ MT5 ยังไม่เชื่อมต่อ'}
-          size="small"
-          sx={{
-            width: '100%',
-            bgcolor: connected ? 'rgba(16,185,129,0.08)' : 'rgba(244,63,94,0.08)',
-            color:   connected ? '#10b981' : '#f43f5e',
-            fontWeight: 700, borderRadius: 1.5,
-          }}
-        />
-        {!connected ? (
-          <Button
-            variant="contained"
-            size="small"
-            fullWidth
-            startIcon={<LinkIcon />}
-            onClick={handleConnect}
-            sx={{ background: 'linear-gradient(135deg,#6366f1,#4f46e5)' }}
-          >
-            เชื่อมต่อ MT5
-          </Button>
-        ) : (
-          <Button
-            variant="outlined"
-            size="small"
-            fullWidth
-            startIcon={<LinkOff />}
-            onClick={handleDisconnect}
-            sx={{ borderColor: 'rgba(244,63,94,0.3)', color: '#f43f5e' }}
-          >
-            ตัดการเชื่อมต่อ
-          </Button>
-        )}
-      </Box>
-    </Box>
-  );
-
-  const renderPage = () => {
-    switch (page) {
-      case 'dashboard':
-        return (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-            {/* Stats strip — fixed 72px */}
-            <QuickOverview
-              connected={connected}
-              account={account}
-              price={price}
-              positions={positions}
-              risk={risk}
-            />
-
-            {/* 3-column row — horizontal on desktop, vertical stack on mobile */}
-            <Box sx={{
-              display: 'flex',
-              flexDirection: { xs: 'column', lg: 'row' },
-              gap: 2.5,
-              alignItems: 'stretch',
-              minWidth: 0,
-            }}>
-              {/* Account (30% on desktop, 100% on mobile) */}
-              <Box sx={{ flex: { xs: '1 1 auto', lg: '0 0 30%' }, minWidth: 0 }}>
-                <AccountCard
-                  account={account}
-                  connected={connected}
-                  onConnect={handleConnect}
-                  onDisconnect={handleDisconnect}
-                />
-              </Box>
-              {/* Trade Panel (30% on desktop, 100% on mobile) */}
-              <Box sx={{ flex: { xs: '1 1 auto', lg: '0 0 30%' }, minWidth: 0 }}>
-                <ManualTradePanel price={price} risk={risk} onRefresh={fetchAll} />
-              </Box>
-              {/* Positions Table (40% on desktop, 100% on mobile) */}
-              <Box sx={{ flex: { xs: '1 1 auto', lg: '1 1 0' }, minWidth: 0 }}>
-                <PositionsTable positions={positions} onRefresh={fetchAll} />
-              </Box>
-            </Box>
-          </Box>
-        );
-
-      case 'signals':
-        return <SignalsTracker signals={signals} loading={loading} onRefresh={fetchAll} />;
-
-      case 'history':
-        return <TradeHistoryTable history={history} loading={false} />;
-
-      case 'settings':
-        return <WebhookGuide serverStatus={connected} onRefresh={fetchAll} />;
-
-      default:
-        return null;
-    }
-  };
-
   if (!isTradeRoute) {
     return (
       <ThemeProvider theme={theme}>
@@ -313,48 +151,56 @@ export default function App() {
         }
       `}</style>
 
-      <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
-        <AppBar
-          position="fixed"
-          sx={{
-            width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
-            ml: { md: `${DRAWER_WIDTH}px` },
-            bgcolor: 'rgba(11,15,25,0.75)',
-            backdropFilter: 'blur(12px)',
-            borderBottom: '1px solid rgba(255,255,255,0.05)',
-            boxShadow: 'none',
-          }}
-        >
-          <Toolbar sx={{ gap: 1 }}>
-            <IconButton sx={{ display: { md: 'none' } }} onClick={() => setMobileOpen(true)}>
-              <MenuIcon />
-            </IconButton>
-            <Box sx={{ flexGrow: 1 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
-                {currentNav?.label}
-              </Typography>
-              {currentNav?.desc && (
-                <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
-                  {currentNav.desc}
-                </Typography>
-              )}
+      {/* --- Top Navbar --- */}
+      <AppBar
+        position="fixed"
+        sx={{
+          bgcolor: 'rgba(11,15,25,0.75)',
+          backdropFilter: 'blur(12px)',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+          boxShadow: 'none',
+        }}
+      >
+        <Toolbar sx={{ display: 'flex', justifyContent: 'space-between', px: { xs: 2, sm: 4 }, gap: 2 }}>
+          {/* Logo / Title */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box sx={{
+              p: 0.7, borderRadius: 1.5,
+              background: 'linear-gradient(135deg,#6366f1,#d97706)',
+              display: 'flex',
+              alignItems: 'center',
+            }}>
+              <MonetizationOn sx={{ fontSize: 22, color: '#fff' }} />
             </Box>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1, background: 'linear-gradient(90deg,#fbbf24,#f59e0b)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                XAUUSD Bot Dashboard
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontSize: '0.7rem' }}>
+                Exness Demo · Automated Pure Structure EA
+              </Typography>
+            </Box>
+          </Box>
 
+          {/* Center/Right Status and Actions */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             {lastRefresh && (
-              <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', lg: 'block' } }}>
                 อัปเดต {lastRefresh.toLocaleTimeString('th-TH')}
               </Typography>
             )}
 
+            {/* Refresh Button */}
             <Tooltip title="รีเฟรชข้อมูล">
-              <IconButton onClick={fetchAll} disabled={loading} size="small">
+              <IconButton onClick={() => fetchAll(false)} disabled={loading} size="small" sx={{ border: '1px solid rgba(255,255,255,0.08)' }}>
                 {loading
                   ? <CircularProgress size={18} sx={{ color: 'text.secondary' }} />
-                  : <RefreshIcon sx={{ fontSize: 20 }} />
+                  : <RefreshIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
                 }
               </IconButton>
             </Tooltip>
 
+            {/* Float Profit/Loss Chip */}
             {account && (
               <Chip
                 label={`${account.profit >= 0 ? '+' : ''}$${Number(account.profit).toFixed(2)}`}
@@ -363,47 +209,160 @@ export default function App() {
                   bgcolor: account.profit >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(244,63,94,0.12)',
                   color:   account.profit >= 0 ? '#10b981' : '#f43f5e',
                   fontWeight: 700,
+                  fontSize: '0.75rem',
+                  px: 0.5,
                 }}
               />
             )}
-          </Toolbar>
-        </AppBar>
 
-        <Drawer
-          variant="temporary"
-          open={mobileOpen}
-          onClose={() => setMobileOpen(false)}
-          ModalProps={{ keepMounted: true }}
-          sx={{ display: { xs: 'block', md: 'none' }, '& .MuiDrawer-paper': { width: DRAWER_WIDTH, backgroundImage: 'none' } }}
-        >
-          {sidebarContent}
-        </Drawer>
+            {/* Quick Actions */}
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                variant="outlined"
+                startIcon={<Webhook />}
+                onClick={() => setGuideOpen(true)}
+                sx={{
+                  borderRadius: 2,
+                  fontSize: '0.8rem',
+                  borderColor: 'rgba(99,102,241,0.25)',
+                  color: '#818cf8',
+                  '&:hover': { borderColor: '#818cf8', bgcolor: 'rgba(99,102,241,0.04)' }
+                }}
+              >
+                คู่มือการตั้งค่า
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<HistoryIcon />}
+                onClick={() => setHistoryOpen(true)}
+                sx={{
+                  borderRadius: 2,
+                  fontSize: '0.8rem',
+                  borderColor: 'rgba(255,255,255,0.08)',
+                  color: 'text.primary',
+                  '&:hover': { borderColor: 'rgba(255,255,255,0.2)', bgcolor: 'rgba(255,255,255,0.02)' }
+                }}
+              >
+                ประวัติการเทรด
+              </Button>
+              <Button
+                variant="contained"
+                onClick={connected ? handleDisconnect : handleConnect}
+                color={connected ? 'error' : 'primary'}
+                size="medium"
+                startIcon={connected ? <LinkOff /> : <LinkIcon />}
+                sx={{
+                  borderRadius: 2,
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  background: connected ? undefined : 'linear-gradient(135deg,#6366f1,#4f46e5)',
+                  boxShadow: connected ? undefined : '0 4px 12px rgba(99,102,241,0.2)',
+                }}
+              >
+                {connected ? 'ยกเลิกเชื่อมต่อ MT5' : 'เชื่อมต่อ MT5'}
+              </Button>
+            </Box>
+          </Box>
+        </Toolbar>
+      </AppBar>
 
-        <Drawer
-          variant="permanent"
-          sx={{
-            display: { xs: 'none', md: 'block' },
-            '& .MuiDrawer-paper': { width: DRAWER_WIDTH, borderRight: '1px solid rgba(255,255,255,0.05)', backgroundImage: 'none' },
-          }}
-          open
-        >
-          {sidebarContent}
-        </Drawer>
+      {/* --- Main Dashboard Container --- */}
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          px: { xs: 2, sm: 4 },
+          pb: { xs: 4, sm: 6 },
+          pt: { xs: 11, sm: 12 },
+          minHeight: '100vh',
+          bgcolor: 'background.default',
+        }}
+      >
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5, maxWidth: '1440px', mx: 'auto' }}>
+          
+          {/* 1. Quick Statistics Strip */}
+          <QuickOverview
+            connected={connected}
+            account={account}
+            price={price}
+            positions={positions}
+            risk={risk}
+          />
 
-        <Box
-          component="main"
-          sx={{
-            flexGrow: 1,
-            p: { xs: 2, sm: 3 },
-            pt: { xs: 9, sm: 10 },
-            width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
-            ml: { md: `${DRAWER_WIDTH}px` },
-            minHeight: '100vh',
-          }}
-        >
-          {renderPage()}
+          {/* 2. Main content layout */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5 }}>
+            {/* Active Positions */}
+            <PositionsTable positions={positions} onRefresh={fetchAll} />
+            
+            {/* Signals Tracker */}
+            <SignalsTracker signals={signals} loading={loading} onRefresh={fetchAll} />
+          </Box>
         </Box>
       </Box>
+
+      {/* --- Guide Dialog Popup --- */}
+      <Dialog
+        open={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        maxWidth="md"
+        fullWidth
+        scroll="paper"
+        PaperProps={{
+          sx: {
+            bgcolor: 'background.paper',
+            backgroundImage: 'none',
+            borderRadius: 3,
+            border: '1px solid rgba(255,255,255,0.08)',
+          }
+        }}
+      >
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
+          <Typography variant="h6" sx={{ fontWeight: 800 }}>คู่มือระบบ & การทำงาน</Typography>
+          <IconButton onClick={() => setGuideOpen(false)} size="small" sx={{ color: 'text.secondary' }}>
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers sx={{ borderColor: 'rgba(255,255,255,0.05)', px: { xs: 2, sm: 3 } }}>
+          <WebhookGuide serverStatus={connected} />
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button variant="contained" onClick={() => setGuideOpen(false)} sx={{ px: 3, borderRadius: 1.5 }}>
+            ปิดหน้าต่าง
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* --- History Dialog Popup --- */}
+      <Dialog
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        maxWidth="md"
+        fullWidth
+        scroll="paper"
+        PaperProps={{
+          sx: {
+            bgcolor: 'background.paper',
+            backgroundImage: 'none',
+            borderRadius: 3,
+            border: '1px solid rgba(255,255,255,0.08)',
+          }
+        }}
+      >
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
+          <Typography variant="h6" sx={{ fontWeight: 800 }}>ประวัติการทำรายการล่าสุด</Typography>
+          <IconButton onClick={() => setHistoryOpen(false)} size="small" sx={{ color: 'text.secondary' }}>
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers sx={{ borderColor: 'rgba(255,255,255,0.05)', p: 0 }}>
+          <TradeHistoryTable history={history} loading={false} />
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button variant="contained" onClick={() => setHistoryOpen(false)} sx={{ px: 3, borderRadius: 1.5 }}>
+            ปิดหน้าต่าง
+          </Button>
+        </DialogActions>
+      </Dialog>
     </ThemeProvider>
   );
 }

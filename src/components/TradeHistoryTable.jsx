@@ -20,16 +20,22 @@ const fmtTime = (iso) => {
 };
 
 export default function TradeHistoryTable({ history = [], loading }) {
-  const totalPnl = history.reduce((s, h) => s + (h.profit || 0), 0);
-  const wins     = history.filter(h => h.profit > 0).length;
-  const winRate  = history.length > 0 ? ((wins / history.length) * 100).toFixed(1) : '—';
+  const sortedHistory = [...history].sort((a, b) => {
+    const timeA = new Date(ensureUtcIso(a.time)).getTime();
+    const timeB = new Date(ensureUtcIso(b.time)).getTime();
+    return timeB - timeA;
+  });
+
+  const totalPnl = sortedHistory.reduce((s, h) => s + (h.profit || 0), 0);
+  const wins     = sortedHistory.filter(h => h.profit > 0).length;
+  const winRate  = sortedHistory.length > 0 ? ((wins / sortedHistory.length) * 100).toFixed(1) : '—';
 
   return (
     <Paper sx={{ p: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>ประวัติการเทรด</Typography>
-          <Chip label={`${history.length} trades`} size="small" sx={{ bgcolor: 'rgba(255,255,255,0.05)', color: 'text.secondary' }} />
+          <Chip label={`${sortedHistory.length} trades`} size="small" sx={{ bgcolor: 'rgba(255,255,255,0.05)', color: 'text.secondary' }} />
         </Box>
         <Box sx={{ display: 'flex', gap: 2 }}>
           <Box sx={{ textAlign: 'right' }}>
@@ -49,7 +55,7 @@ export default function TradeHistoryTable({ history = [], loading }) {
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           {[1, 2, 3].map(i => <Skeleton key={i} variant="rectangular" height={48} sx={{ borderRadius: 1.5 }} />)}
         </Box>
-      ) : history.length === 0 ? (
+      ) : sortedHistory.length === 0 ? (
         <Box sx={{ py: 5, textAlign: 'center' }}>
           <Typography sx={{ color: 'text.disabled' }}>No trade history</Typography>
         </Box>
@@ -67,7 +73,7 @@ export default function TradeHistoryTable({ history = [], loading }) {
               </TableRow>
             </TableHead>
             <TableBody>
-              {history.map((h) => (
+              {sortedHistory.map((h) => (
                 <TableRow key={h.ticket} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.01)' } }}>
                   <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'text.secondary' }}>{h.ticket}</TableCell>
                   <TableCell>

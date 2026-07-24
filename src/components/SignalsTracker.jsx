@@ -22,24 +22,28 @@ const ensureUtcIso = (dateStr) => {
 
 function StatCard({ label, value, color, icon, subtitle }) {
   return (
-    <Paper sx={{ p: 2.5, height: '100%' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <Box>
-          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+    <Paper sx={{ p: 1.5, height: '100%', borderColor: 'rgba(255,255,255,0.05)' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', fontSize: '0.62rem', lineHeight: 1 }}>
             {label}
           </Typography>
-          <Typography variant="h4" sx={{ fontWeight: 800, mt: 0.5, color: color || 'text.primary' }}>
+          <Typography sx={{ fontWeight: 800, mt: 0.5, color: color || 'text.primary', fontSize: '1.25rem', lineHeight: 1.2 }}>
             {value}
           </Typography>
           {subtitle && (
-            <Typography variant="caption" sx={{ color: 'text.secondary', mt: 0.5, display: 'block' }}>
+            <Typography variant="caption" sx={{ color: 'text.disabled', mt: 0.25, display: 'block', fontSize: '0.65rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {subtitle}
             </Typography>
           )}
         </Box>
         {icon && (
-          <Box sx={{ p: 1, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.03)', display: 'flex', alignItems: 'center' }}>
-            {React.cloneElement(icon, { sx: { fontSize: 24, color } })}
+          <Box sx={{
+            width: 32, height: 32, borderRadius: 1.5, flexShrink: 0,
+            bgcolor: `${color ? color : '#fff'}12`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}>
+            {React.cloneElement(icon, { sx: { fontSize: 16, color: color || 'text.primary' } })}
           </Box>
         )}
       </Box>
@@ -107,8 +111,13 @@ export default function SignalsTracker({ signals, loading, onRefresh }) {
       </Box>
 
       {/* Metrics Row */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={6} md={3}>
+      <Box sx={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 2,
+        mb: 3,
+      }}>
+        <Box sx={{ flex: { xs: '1 1 calc(50% - 8px)', md: '1 1 0' }, minWidth: { xs: 140, md: 0 } }}>
           <StatCard
             label="อัตราชนะ"
             value={`${fmt(winRate, 1)}%`}
@@ -116,8 +125,8 @@ export default function SignalsTracker({ signals, loading, onRefresh }) {
             icon={<CheckCircle />}
             subtitle={`${winTrades.length} Wins / ${lossTrades.length} Losses`}
           />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        </Box>
+        <Box sx={{ flex: { xs: '1 1 calc(50% - 8px)', md: '1 1 0' }, minWidth: { xs: 140, md: 0 } }}>
           <StatCard
             label="กำไร/ขาดทุนรวม"
             value={`${totalProfit >= 0 ? '+' : ''}$${fmt(totalProfit)}`}
@@ -125,8 +134,8 @@ export default function SignalsTracker({ signals, loading, onRefresh }) {
             icon={totalProfit >= 0 ? <TrendingUp /> : <TrendingDown />}
             subtitle="Accumulated strategy profit"
           />
-        </Grid>
-        <Grid item xs={6} sm={6} md={3}>
+        </Box>
+        <Box sx={{ flex: { xs: '1 1 calc(50% - 8px)', md: '1 1 0' }, minWidth: { xs: 140, md: 0 } }}>
           <StatCard
             label="สัญญาณทั้งหมด"
             value={totalTrades}
@@ -134,8 +143,8 @@ export default function SignalsTracker({ signals, loading, onRefresh }) {
             icon={<ShowChart />}
             subtitle={`${openTrades.length} Active (Open)`}
           />
-        </Grid>
-        <Grid item xs={6} sm={6} md={3}>
+        </Box>
+        <Box sx={{ flex: { xs: '1 1 calc(50% - 8px)', md: '1 1 0' }, minWidth: { xs: 140, md: 0 } }}>
           <StatCard
             label="สัญญาณที่ยังเปิด"
             value={openTrades.length}
@@ -143,8 +152,8 @@ export default function SignalsTracker({ signals, loading, onRefresh }) {
             icon={<HourglassEmpty />}
             subtitle="Waiting for SL/TP exit"
           />
-        </Grid>
-      </Grid>
+        </Box>
+      </Box>
 
       {/* History Table */}
       <TableContainer component={Paper}>
