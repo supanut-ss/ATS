@@ -181,7 +181,7 @@ export default function App() {
                 {isDemoRoute ? 'Script Test Dashboard' : 'XAUUSD Bot Dashboard'}
               </Typography>
               <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontSize: '0.7rem' }}>
-                {isDemoRoute ? 'ISOLATED DEMO · Backend port 5001' : 'MAIN · Automated Pure Structure EA'}
+                {isDemoRoute ? 'ISOLATED DEMO · Same backend via /demo' : 'MAIN · Automated Pure Structure EA'}
               </Typography>
             </Box>
           </Box>

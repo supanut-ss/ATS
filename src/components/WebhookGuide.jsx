@@ -184,14 +184,14 @@ function CopyField({ label, value }) {
 
 export default function WebhookGuide({ serverStatus, environment = 'main', backendUrl = '' }) {
   const isDemo = environment === 'demo';
-  const localUrl = isDemo ? 'http://localhost:5001' : 'http://localhost:5000';
-  const liveUrl = backendUrl || (isDemo ? `${window.location.protocol}//${window.location.hostname}:5001` : window.location.origin);
+  const localUrl = isDemo ? 'http://localhost:5000/demo' : 'http://localhost:5000';
+  const liveUrl = backendUrl || (isDemo ? `${window.location.origin}/demo` : window.location.origin);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       {isDemo && (
         <Alert severity="warning" variant="outlined" sx={{ borderWidth: 2 }}>
-          คู่มือนี้เป็นของ <strong>Demo/Test Backend พอร์ต 5001</strong> ห้ามใช้ URL นี้กับ EA ระบบหลัก และควรตั้ง
+          คู่มือนี้เป็นของ <strong>Demo/Test namespace /demo บน Backend เดียวกัน</strong> ห้ามใช้ URL นี้กับ EA ระบบหลัก และควรตั้ง
           <strong> InpMagic</strong> คนละค่ากับ EA หลัก (หรือใช้บัญชี MT5 Demo แยก)
         </Alert>
       )}

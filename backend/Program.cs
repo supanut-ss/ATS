@@ -4,7 +4,10 @@ using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
-var isDemoEnvironment = builder.Environment.IsEnvironment("Demo");
+var demoConfiguration = new ConfigurationBuilder()
+    .SetBasePath(builder.Environment.ContentRootPath)
+    .AddJsonFile("appsettings.Demo.json", optional: true, reloadOnChange: true)
+    .Build();
 
 builder.Services.AddOpenApi();
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -17,35 +20,71 @@ builder.Services.AddCors(options =>
     options.AddPolicy("AllowAll", policy =>
         policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 });
+builder.Services.AddHttpContextAccessor();
 
-var connStr = isDemoEnvironment
-    ? builder.Configuration.GetConnectionString("DemoMySql")
-    : builder.Configuration.GetConnectionString("MySql");
+var connStr = builder.Configuration.GetConnectionString("MySql");
 
 if (string.IsNullOrWhiteSpace(connStr))
-{
-    var key = isDemoEnvironment ? "ConnectionStrings:DemoMySql" : "ConnectionStrings:MySql";
-    throw new InvalidOperationException($"{key} is not configured");
-}
+    throw new InvalidOperationException("ConnectionStrings:MySql is not configured");
 
-if (isDemoEnvironment && !builder.Configuration.GetValue<bool>("DemoSettings:Isolated"))
-    throw new InvalidOperationException(
-        "Demo backend refused to start without DemoSettings:Isolated=true. " +
-        "Create appsettings.Demo.json from appsettings.Demo.example.json and use a separate database.");
+var demoConnStr = demoConfiguration.GetConnectionString("DemoMySql");
+var demoStorageConfigured = !string.IsNullOrWhiteSpace(demoConnStr)
+    && demoConfiguration.GetValue<bool>("DemoSettings:Isolated");
 
-builder.Services.AddSingleton(new DbService(connStr));
+builder.Services.AddSingleton(sp => new DbRouter(
+    new DbService(connStr),
+    demoStorageConfigured ? new DbService(demoConnStr!) : null,
+    sp.GetRequiredService<IHttpContextAccessor>()));
 
 var app = builder.Build();
 
-app.UseCors("AllowAll");
+// Demo uses the same process/port. Rewrite its namespaced URLs to the existing
+// handlers while keeping request-scoped storage and MT5 state isolated.
+app.Use(async (context, next) =>
+{
+    PathString remaining;
+    var isDemoRequest = false;
+
+    if (context.Request.Path.StartsWithSegments("/demo/api", out remaining))
+    {
+        isDemoRequest = true;
+        context.Request.Path = new PathString("/api").Add(remaining);
+    }
+    else if (context.Request.Path.Equals("/demo/webhook"))
+    {
+        isDemoRequest = true;
+        context.Request.Path = "/webhook";
+    }
+
+    if (isDemoRequest)
+    {
+        context.Items[DbRouter.InstanceKey] = "demo";
+        if (!demoStorageConfigured)
+        {
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                ok = false,
+                instance = "demo",
+                error = "Demo storage is not configured. Create backend/appsettings.Demo.json."
+            });
+            return;
+        }
+    }
+
+    await next();
+});
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.UseRouting();
+app.UseCors("AllowAll");
 
 if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 
 // ─── Startup: ensure tables & migrate legacy JSON ───────────────────
-var db = app.Services.GetRequiredService<DbService>();
+var db = app.Services.GetRequiredService<DbRouter>();
 await db.EnsureTablesAsync();
 
 var legacyDbPath = Path.Combine(app.Environment.ContentRootPath, "signals_db.json");
@@ -74,6 +113,8 @@ if (File.Exists(legacyDbPath))
 // ─── Global config ───────────────────────────────────────────────────
 var webhookSecret = app.Configuration.GetValue<string>("WebhookSettings:Secret")
     ?? "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f";
+var demoWebhookSecret = demoConfiguration.GetValue<string>("DemoWebhookSettings:Secret")
+    ?? webhookSecret;
 
 var rawJsonOptions = new JsonSerializerOptions
 {
@@ -87,15 +128,10 @@ var jsonOpts = new JsonSerializerOptions
     WriteIndented = true
 };
 
-// ─── MT5 in-memory state (refreshed each heartbeat) ─────────────────
-var lastHeartbeat = DateTime.MinValue;
-var mt5Balance    = 0.0;
-var mt5Equity     = 0.0;
-var mt5FreeMargin = 0.0;
-var mt5Bid        = 0.0;
-var mt5Ask        = 0.0;
-var mt5PositionsList = new List<HeartbeatPosition>();
-var mt5Connected  = false;
+// ─── MT5 in-memory state (isolated per Main/Demo request) ────────────
+var httpContextAccessor = app.Services.GetRequiredService<IHttpContextAccessor>();
+var runtime = new TradingRuntimeRouter(httpContextAccessor);
+string ActiveWebhookSecret() => runtime.IsDemo ? demoWebhookSecret : webhookSecret;
 
 // Load latest snapshot from MySQL on startup
 try
@@ -103,18 +139,18 @@ try
     var latestSnapshot = await db.GetLatestAccountSnapshotAsync();
     if (latestSnapshot != null)
     {
-        mt5Balance    = latestSnapshot.Balance;
-        mt5Equity     = latestSnapshot.Equity;
-        mt5FreeMargin = latestSnapshot.FreeMargin;
-        mt5Bid        = latestSnapshot.Bid;
-        mt5Ask        = latestSnapshot.Ask;
+        runtime.Balance    = latestSnapshot.Balance;
+        runtime.Equity     = latestSnapshot.Equity;
+        runtime.FreeMargin = latestSnapshot.FreeMargin;
+        runtime.Bid        = latestSnapshot.Bid;
+        runtime.Ask        = latestSnapshot.Ask;
         if (!string.IsNullOrWhiteSpace(latestSnapshot.PositionsJson))
         {
-            mt5PositionsList = JsonSerializer.Deserialize<List<HeartbeatPosition>>(latestSnapshot.PositionsJson, jsonOpts)
-                               ?? new List<HeartbeatPosition>();
+            runtime.Positions = JsonSerializer.Deserialize<List<HeartbeatPosition>>(latestSnapshot.PositionsJson, jsonOpts)
+                                ?? new List<HeartbeatPosition>();
         }
-        lastHeartbeat = latestSnapshot.Timestamp;
-        Console.WriteLine($"[MySQL] Restored latest snapshot from {latestSnapshot.Timestamp} (Positions: {mt5PositionsList.Count})");
+        runtime.LastHeartbeat = latestSnapshot.Timestamp;
+        Console.WriteLine($"[MySQL] Restored latest snapshot from {latestSnapshot.Timestamp} (Positions: {runtime.Positions.Count})");
     }
 }
 catch (Exception ex)
@@ -141,7 +177,7 @@ app.MapPost("/webhook", async (HttpContext context) =>
             return Results.BadRequest(new { ok = false, error = "Invalid JSON payload" });
         }
 
-        if (payload.Token != webhookSecret)
+        if (payload.Token != ActiveWebhookSecret())
         {
             await db.AddLogAsync(payload.Action ?? "?", body, null, "Unauthorized");
             return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
@@ -235,18 +271,18 @@ app.MapGet("/api/signals", async () =>
 // ─── POST /api/signals/pending — Heartbeat from EA ───────────────────
 app.MapPost("/api/signals/pending", async ([FromBody] HeartbeatPayload payload) =>
 {
-    if (payload.Token != webhookSecret)
+    if (payload.Token != ActiveWebhookSecret())
         return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
 
     // Update in-memory MT5 state
-    lastHeartbeat    = DateTime.UtcNow;
-    mt5Balance       = payload.Balance;
-    mt5Equity        = payload.Equity;
-    mt5FreeMargin    = payload.FreeMargin;
-    mt5Bid           = payload.Bid;
-    mt5Ask           = payload.Ask;
-    mt5PositionsList = payload.Positions;
-    mt5Connected     = true;
+    runtime.LastHeartbeat = DateTime.UtcNow;
+    runtime.Balance       = payload.Balance;
+    runtime.Equity        = payload.Equity;
+    runtime.FreeMargin    = payload.FreeMargin;
+    runtime.Bid           = payload.Bid;
+    runtime.Ask           = payload.Ask;
+    runtime.Positions     = payload.Positions;
+    runtime.Connected     = true;
 
     // Persist snapshot to MySQL (fire-and-forget style to not slow heartbeat)
     var posJson = JsonSerializer.Serialize(payload.Positions);
@@ -261,7 +297,7 @@ app.MapPost("/api/signals/pending", async ([FromBody] HeartbeatPayload payload) 
 // ─── POST /api/signals/update — EA reports open/close result ─────────
 app.MapPost("/api/signals/update", async ([FromBody] SignalUpdatePayload payload) =>
 {
-    if (payload.Token != webhookSecret)
+    if (payload.Token != ActiveWebhookSecret())
         return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
 
     var signal = await db.GetSignalByIdAsync(payload.Id);
@@ -284,7 +320,7 @@ app.MapPost("/api/signals/update", async ([FromBody] SignalUpdatePayload payload
 // ─── POST /api/signals/local — EA reports a local open/close trade ────
 app.MapPost("/api/signals/local", async ([FromBody] LocalTradePayload payload) =>
 {
-    if (payload.Token != webhookSecret)
+    if (payload.Token != ActiveWebhookSecret())
         return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
 
     var signal = await db.GetSignalByIdAsync(payload.Id) ?? new Signal();
@@ -327,12 +363,12 @@ app.MapGet("/api/status", async () =>
     var signals      = await db.ReadSignalsAsync();
     var openCount    = signals.Count(s => s.Status == "OPEN");
     var pendingCount = signals.Count(s => s.Status.StartsWith("PENDING_"));
-    var isConnected  = (DateTime.UtcNow - lastHeartbeat).TotalSeconds < 10;
+    var isConnected  = (DateTime.UtcNow - runtime.LastHeartbeat).TotalSeconds < 10;
 
     return Results.Json(new
     {
         ok               = true,
-        instance         = isDemoEnvironment ? "demo" : "main",
+        instance         = runtime.Instance,
         environment      = app.Environment.EnvironmentName,
         mode             = "mql5_ea",
         open_trades      = openCount,
@@ -343,23 +379,23 @@ app.MapGet("/api/status", async () =>
 });
 
 // ─── POST /api/connect / disconnect ──────────────────────────────────
-app.MapPost("/api/connect",    () => { mt5Connected = true;  return Results.Ok(new { ok = true, message = "Connected to MT5"    }); });
-app.MapPost("/api/disconnect", () => { mt5Connected = false; return Results.Ok(new { ok = true, message = "Disconnected from MT5" }); });
+app.MapPost("/api/connect",    () => { runtime.Connected = true;  return Results.Ok(new { ok = true, message = "Connected to MT5"    }); });
+app.MapPost("/api/disconnect", () => { runtime.Connected = false; return Results.Ok(new { ok = true, message = "Disconnected from MT5" }); });
 
 // ─── GET /api/account ────────────────────────────────────────────────
 app.MapGet("/api/account", () =>
 {
-    var isConnected = (DateTime.UtcNow - lastHeartbeat).TotalSeconds < 10;
+    var isConnected = (DateTime.UtcNow - runtime.LastHeartbeat).TotalSeconds < 10;
     if (!isConnected)
         return Results.Json(new { ok = false, error = "MT5 Not Connected" }, statusCode: 400);
 
     return Results.Json(new
     {
-        balance     = Math.Round(mt5Balance, 2),
-        equity      = Math.Round(mt5Equity, 2),
-        margin      = Math.Round(mt5Equity * 0.8, 2),
-        free_margin = Math.Round(mt5FreeMargin, 2),
-        profit      = Math.Round(mt5Equity - mt5Balance, 2),
+        balance     = Math.Round(runtime.Balance, 2),
+        equity      = Math.Round(runtime.Equity, 2),
+        margin      = Math.Round(runtime.Equity * 0.8, 2),
+        free_margin = Math.Round(runtime.FreeMargin, 2),
+        profit      = Math.Round(runtime.Equity - runtime.Balance, 2),
         currency    = "USD",
         login       = 279661518,
         name        = "Exness Demo Account",
@@ -370,11 +406,11 @@ app.MapGet("/api/account", () =>
 // ─── GET /api/price ───────────────────────────────────────────────────
 app.MapGet("/api/price", () =>
 {
-    var isConnected = (DateTime.UtcNow - lastHeartbeat).TotalSeconds < 10;
-    double bid = mt5Bid;
-    double ask = mt5Ask;
+    var isConnected = (DateTime.UtcNow - runtime.LastHeartbeat).TotalSeconds < 10;
+    double bid = runtime.Bid;
+    double ask = runtime.Ask;
 
-    if (!isConnected || mt5Bid == 0)
+    if (!isConnected || runtime.Bid == 0)
     {
         currentPrice += (random.NextDouble() - 0.5) * 0.2;
         currentPrice  = Math.Round(currentPrice, 2);
@@ -396,10 +432,10 @@ app.MapGet("/api/price", () =>
 // ─── GET /api/positions ───────────────────────────────────────────────
 app.MapGet("/api/positions", () =>
 {
-    var isConnected = (DateTime.UtcNow - lastHeartbeat).TotalSeconds < 10;
+    var isConnected = (DateTime.UtcNow - runtime.LastHeartbeat).TotalSeconds < 10;
     if (!isConnected) return Results.Json(new List<object>(), rawJsonOptions);
 
-    var list = mt5PositionsList.Select(p => (object)new
+    var list = runtime.Positions.Select(p => (object)new
     {
         ticket        = p.Ticket,
         symbol        = p.Symbol,
@@ -458,9 +494,9 @@ app.MapGet("/api/risk", async () =>
                     && s.Timestamp.Date == today)
         .Sum(s => s.Profit);
 
-    var isConnected    = (DateTime.UtcNow - lastHeartbeat).TotalSeconds < 10;
+    var isConnected    = (DateTime.UtcNow - runtime.LastHeartbeat).TotalSeconds < 10;
     var openPositions  = isConnected
-        ? mt5PositionsList.Count
+        ? runtime.Positions.Count
         : signals.Count(s => s.Status == "OPEN");
 
     return Results.Json(new
@@ -476,7 +512,7 @@ app.MapGet("/api/risk", async () =>
 // ─── POST /api/trade ──────────────────────────────────────────────────
 app.MapPost("/api/trade", async (HttpContext context) =>
 {
-    if (!mt5Connected)
+    if (!runtime.Connected)
         return Results.Json(new { ok = false, error = "MT5 Not Connected" }, statusCode: 400);
 
     using var reader = new StreamReader(context.Request.Body);
@@ -559,6 +595,91 @@ app.MapPost("/api/modify/{ticket}", async (string ticket, HttpContext context) =
 app.MapFallbackToFile("index.html");
 
 app.Run();
+
+public sealed class DbRouter
+{
+    public const string InstanceKey = "ATS.Instance";
+
+    private readonly DbService _main;
+    private readonly DbService? _demo;
+    private readonly IHttpContextAccessor _httpContextAccessor;
+
+    public DbRouter(DbService main, DbService? demo, IHttpContextAccessor httpContextAccessor)
+    {
+        _main = main;
+        _demo = demo;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    private bool IsDemo => string.Equals(
+        _httpContextAccessor.HttpContext?.Items[InstanceKey] as string,
+        "demo",
+        StringComparison.OrdinalIgnoreCase);
+
+    private DbService Current => IsDemo
+        ? _demo ?? throw new InvalidOperationException("Demo storage is not configured")
+        : _main;
+
+    public async Task EnsureTablesAsync()
+    {
+        await _main.EnsureTablesAsync();
+        if (_demo != null)
+            await _demo.EnsureTablesAsync();
+    }
+
+    public Task<List<Signal>> ReadSignalsAsync() => Current.ReadSignalsAsync();
+    public Task<Signal?> GetSignalByIdAsync(string id) => Current.GetSignalByIdAsync(id);
+    public Task UpsertSignalAsync(Signal signal) => Current.UpsertSignalAsync(signal);
+    public Task ClearSignalsAsync() => Current.ClearSignalsAsync();
+    public Task AddLogAsync(string action, string body, string? result, string? error = null) =>
+        Current.AddLogAsync(action, body, result, error);
+    public Task<List<WebhookLogEntry>> GetRecentLogsAsync(int count = 20) =>
+        Current.GetRecentLogsAsync(count);
+    public Task<AccountSnapshotEntity?> GetLatestAccountSnapshotAsync() =>
+        Current.GetLatestAccountSnapshotAsync();
+    public Task AddAccountSnapshotAsync(double balance, double equity, double freeMargin,
+        double bid, double ask, int openPositions, string positionsJson) =>
+        Current.AddAccountSnapshotAsync(balance, equity, freeMargin, bid, ask, openPositions, positionsJson);
+}
+
+public sealed class TradingRuntimeRouter
+{
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly TradingRuntimeState _main = new();
+    private readonly TradingRuntimeState _demo = new();
+
+    public TradingRuntimeRouter(IHttpContextAccessor httpContextAccessor) =>
+        _httpContextAccessor = httpContextAccessor;
+
+    public bool IsDemo => string.Equals(
+        _httpContextAccessor.HttpContext?.Items[DbRouter.InstanceKey] as string,
+        "demo",
+        StringComparison.OrdinalIgnoreCase);
+
+    private TradingRuntimeState Current => IsDemo ? _demo : _main;
+
+    public string Instance => IsDemo ? "demo" : "main";
+    public DateTime LastHeartbeat { get => Current.LastHeartbeat; set => Current.LastHeartbeat = value; }
+    public double Balance { get => Current.Balance; set => Current.Balance = value; }
+    public double Equity { get => Current.Equity; set => Current.Equity = value; }
+    public double FreeMargin { get => Current.FreeMargin; set => Current.FreeMargin = value; }
+    public double Bid { get => Current.Bid; set => Current.Bid = value; }
+    public double Ask { get => Current.Ask; set => Current.Ask = value; }
+    public List<HeartbeatPosition> Positions { get => Current.Positions; set => Current.Positions = value; }
+    public bool Connected { get => Current.Connected; set => Current.Connected = value; }
+}
+
+public sealed class TradingRuntimeState
+{
+    public DateTime LastHeartbeat { get; set; } = DateTime.MinValue;
+    public double Balance { get; set; }
+    public double Equity { get; set; }
+    public double FreeMargin { get; set; }
+    public double Bid { get; set; }
+    public double Ask { get; set; }
+    public List<HeartbeatPosition> Positions { get; set; } = new();
+    public bool Connected { get; set; }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // DbService — all MySQL operations

@@ -1,6 +1,6 @@
 /**
  * API clients for the isolated production and script-test environments.
- * /demo uses a second backend process (port 5001 by default).
+ * /demo uses the same backend process through the /demo namespace.
  */
 
 const isLocalHost = typeof window !== 'undefined'
@@ -10,9 +10,7 @@ export const BASE_URL = import.meta.env.VITE_API_URL
   || (isLocalHost ? 'http://localhost:5000' : '');
 
 export const DEMO_BASE_URL = import.meta.env.VITE_DEMO_API_URL
-  || (typeof window !== 'undefined'
-    ? `${window.location.protocol}//${window.location.hostname}:5001`
-    : 'http://localhost:5001');
+  || (isLocalHost ? 'http://localhost:5000/demo' : '/demo');
 
 export function createApiClient(baseUrl) {
   const apiCall = async (path, options = {}) => {

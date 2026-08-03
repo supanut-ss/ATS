@@ -137,31 +137,31 @@ Actions: `BUY` | `SELL` | `CLOSE` | `CLOSE_ALL` | `MODIFY`
 
 ---
 
-## Isolated Demo dashboard and webhook (port 5001)
+## Isolated Demo dashboard and webhook (same backend/port)
 
-The main dashboard remains at `/` and uses the main backend on port `5000`.
-The second script-test dashboard is available at `/demo` and uses only the Demo
-backend on port `5001`.
+The main dashboard remains at `/` and uses `/api/*` plus `/webhook`.
+The second script-test dashboard is available at `/demo` on the same backend and
+port, using only `/demo/api/*` plus `/demo/webhook`.
 
 1. Copy `backend/appsettings.Demo.example.json` to
    `backend/appsettings.Demo.json`.
 2. Configure `ConnectionStrings:DemoMySql` with a database that is separate from
    the main ATS database, and use a different Demo webhook secret.
-3. Start the isolated backend with `./start-demo.ps1`, or run:
+3. Start the single backend normally:
 
 ```powershell
-dotnet run --project backend/ATS.Backend.csproj --launch-profile demo
+dotnet run --project backend/ATS.Backend.csproj --launch-profile http
 ```
 
-4. Set the test EA `InpBackendURL` to `http://localhost:5001` and use a different
+4. Set the test EA `InpBackendURL` to `http://localhost:5000/demo` and use a different
    `InpMagic` (or a separate MT5 Demo account).
-5. Send the second TradingView alert to `http://localhost:5001/webhook` and view
+5. Send the second TradingView alert to `http://localhost:5000/demo/webhook` and view
    its isolated results at `/demo`.
 
-The Demo backend fails closed when `appsettings.Demo.json`,
-`DemoSettings:Isolated=true`, or `ConnectionStrings:DemoMySql` is missing. For a
-remote deployment, set `VITE_DEMO_API_URL` to the HTTPS reverse-proxy address for
-the Demo backend; exposing raw port 5001 publicly is not required.
+Demo API and webhook requests return `503` when `appsettings.Demo.json`,
+`DemoSettings:Isolated=true`, or `ConnectionStrings:DemoMySql` is missing. The
+main backend remains available. No additional firewall port or TLS endpoint is
+required because Main and Demo share the same HTTPS origin.
 
 ## Strategy & EA Parameters Reference (ATS_MT5_EA.mq5)
 
