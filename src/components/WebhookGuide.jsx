@@ -103,11 +103,17 @@ const EA_PARAMETERS = [
   { group: '== Trade Settings ==', param: 'InpMagic', defaultVal: '88188', desc: 'Magic Number ประจำตัว EA สำหรับแยกแยกออเดอร์' },
 
   { group: '== Algorithm & Entry Logic ==', param: 'InpPivotLength', defaultVal: '5 Bars', desc: 'จำนวนแท่งย้อนหลังสำหรับหาจุดสวิงกลับตัว Pivot High / Low' },
+  { group: '== Algorithm & Entry Logic ==', param: 'InpSLBuffer', defaultVal: '1.0 Point', desc: 'ระยะเผื่อ Structural SL คูณด้วย SYMBOL_POINT (ไม่ใช่หน่วยราคาโดยตรง)' },
   { group: '== Algorithm & Entry Logic ==', param: 'InpPDThreshold', defaultVal: '0.618', desc: 'ระดับราคาเกณฑ์ Premium / Discount (Fibonacci 61.8%)' },
   { group: '== Algorithm & Entry Logic ==', param: 'InpEntryMode', defaultVal: 'ENTRY_MODE_DISCOUNT_ONLY (0)', desc: '0 = Discount/Premium Only, 1 = Any FVG/OB, 2 = Strict ICT' },
+  { group: '== Algorithm & Entry Logic ==', param: 'InpRequireCHoCH', defaultVal: 'true', desc: 'BUY ต้องมี Bullish CHoCH และ SELL ต้องมี Bearish CHoCH ในโครงสร้างปัจจุบัน' },
 
   { group: '== Scalping Risk & Fixed SL ==', param: 'InpUseFixedSL', defaultVal: 'true', desc: 'เปิดใช้งาน Stop Loss แบบคงที่ (Points)' },
   { group: '== Scalping Risk & Fixed SL ==', param: 'InpFixedSLPips', defaultVal: '5000 Points ($5.00)', desc: 'ระยะ Stop Loss แบบคงที่จากจุดเข้า' },
+
+  { group: '== Daily Loss Guard ==', param: 'InpUseDailyLossGuard', defaultVal: 'true', desc: 'หยุดเปิดไม้ใหม่เมื่อจำนวนไม้แพ้ของวันถึงขีดจำกัด' },
+  { group: '== Daily Loss Guard ==', param: 'InpMaxDailyLossCount', defaultVal: '4', desc: 'จำนวนสถานะขาดทุนสูงสุดต่อวัน แยกตาม Symbol และ Magic Number' },
+  { group: '== Daily Loss Guard ==', param: 'InpDailyLossTimezone', defaultVal: 'Asia/Bangkok', desc: 'เขตเวลาที่ใช้ตัดวันและรีเซ็ตตัวนับ' },
 
   { group: '== M5 Anti Fake-PA ==', param: 'InpPABodyMin', defaultVal: '0.35 (35%)', desc: 'สัดส่วนเนื้อเทียนขั้นต่ำเทียบกับความยาวแท่ง' },
   { group: '== M5 Anti Fake-PA ==', param: 'InpPAWickMax', defaultVal: '0.60 (60%)', desc: 'สัดส่วนไส้เทียนสูงสุดที่ยอมรับได้' },
@@ -119,7 +125,7 @@ const EA_PARAMETERS = [
   { group: '== Trend Filters ==', param: 'InpUseEMA', defaultVal: 'true (EMA 200 M5)', desc: 'กรองเทรนด์ M5 ด้วยเส้น EMA 200' },
   { group: '== Trend Filters ==', param: 'InpUseH1Trend', defaultVal: 'true (EMA 21 H1)', desc: 'กรองเทรนด์หลักด้วย EMA 21 ในไทม์เฟรม H1' },
   { group: '== Trend Filters ==', param: 'InpUseH4Trend', defaultVal: 'true (EMA 21 H4)', desc: 'กรองเทรนด์หลักด้วย EMA 21 ในไทม์เฟรม H4' },
-  { group: '== Trend Filters ==', param: 'InpFilterCounterTrend', defaultVal: 'false', desc: 'เปิด = ปฏิเสธการเข้าเทรดหากสวนเทรนด์ H1/H4' },
+  { group: '== Trend Filters ==', param: 'InpFilterCounterTrend', defaultVal: 'false', desc: 'พิจารณาการสวนเทรนด์หลังผ่านตัวกรอง H1/H4 ที่เปิดใช้งานแล้ว' },
 
   { group: '== News & Volume Filters ==', param: 'InpUseNewsFilter', defaultVal: 'true', desc: 'เปิดใช้งานตัวกรองช่วงเวลาข่าวใหญ่' },
   { group: '== News & Volume Filters ==', param: 'InpNewsSession', defaultVal: '0300-0500,1930-2030:23456', desc: 'ช่วงเวลาบล็อกการเทรด (UTC Time)' },
@@ -129,6 +135,9 @@ const EA_PARAMETERS = [
   { group: '== Sideway & Range Filters ==', param: 'InpUseADXFilter', defaultVal: 'true (ADX >= 20.0)', desc: 'กรองความแรงเทรนด์ (ADX ต้องไม่อยู่ในจุดซบเซา)' },
   { group: '== Sideway & Range Filters ==', param: 'InpUseChopFilter', defaultVal: 'true (CHOP <= 60.0)', desc: 'กรองตลาดไซด์เวย์บีบตัว (Choppiness Index)' },
   { group: '== Sideway & Range Filters ==', param: 'InpUseATRFilter', defaultVal: 'true (Ratio >= 0.80)', desc: 'กรองภาวะตลาดบีบตัวด้วย ATR Ratio 50 วัน' },
+
+  { group: '== Loss Cooldown Filter ==', param: 'InpUseLossCooldown', defaultVal: 'true', desc: 'พักเปิดไม้ใหม่หลังจากสถานะล่าสุดปิดขาดทุน' },
+  { group: '== Loss Cooldown Filter ==', param: 'InpLossCooldownMins', defaultVal: '60 นาที', desc: 'ระยะเวลาพักหลังไม้แพ้ ทั้งสัญญาณอัตโนมัติและ Webhook' },
 
   { group: '== Breakeven & Trailing Stop ==', param: 'InpBEPips', defaultVal: '5000 Points ($5.00)', desc: 'ระยะกำไรเริ่มย้าย SL เลื่อนมาล็อกทุน Breakeven (+10 Points)' },
   { group: '== Breakeven & Trailing Stop ==', param: 'InpTrailLevel1Pips', defaultVal: '10000 Points ($10.00)', desc: 'ระยะกำไรเริ่มเปิดใช้งาน Trailing Stop' },
@@ -176,7 +185,7 @@ export default function WebhookGuide({ serverStatus }) {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
           <Construction sx={{ color: '#6366f1', fontSize: 24 }} />
           <Typography variant="h6" sx={{ fontWeight: 700, flexGrow: 1 }}>คู่มือการติดตั้ง & ตั้งค่า EA ใน MT5</Typography>
-          <Chip label="โหมดการทำงาน: MT5 Polling (v2.0)" size="small" sx={{ bgcolor: 'rgba(99,102,241,0.12)', color: '#818cf8', fontWeight: 700 }} />
+          <Chip label="โหมดการทำงาน: MT5 Polling (v2.1)" size="small" sx={{ bgcolor: 'rgba(99,102,241,0.12)', color: '#818cf8', fontWeight: 700 }} />
           <Chip
             label={serverStatus ? '● Server Online' : '○ Server Offline'}
             size="small"
@@ -217,7 +226,7 @@ export default function WebhookGuide({ serverStatus }) {
       <Paper sx={{ p: 3, border: '1px solid rgba(255,255,255,0.06)', bgcolor: 'background.paper' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2.5 }}>
           <Description sx={{ color: '#10b981', fontSize: 24 }} />
-          <Typography variant="h6" sx={{ fontWeight: 700 }}>สรุปตรรกะการคำนวณและเทรดของ EA (Pure Structure v2.0)</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>สรุปตรรกะการคำนวณและเทรดของ EA (Pure Structure v2.1)</Typography>
         </Box>
 
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3 }}>

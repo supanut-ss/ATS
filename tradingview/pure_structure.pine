@@ -1,6 +1,6 @@
 //@version=6
 strategy(
-     title               = "Pure Structure v2 [Liquidity+CHoCH+BOS+FVG/OB]",
+     title               = "Pure Structure v2.1 [Liquidity+CHoCH+BOS+FVG/OB]",
      overlay             = true,
      initial_capital     = 100000,
      default_qty_type    = strategy.fixed,
@@ -107,6 +107,11 @@ chop_max_threshold = input.float(60.0, title="Max CHOP Threshold (0-100)",     m
 
 use_atr_filter     = input.bool(true, title="Enable ATR Volatility Squeeze Filter", group=grp_sideway, tooltip="งดเทรดช่วงสภาวะราคาซบเซา Volatility ต่ำผิดปกติ")
 atr_min_ratio      = input.float(0.80, title="Min ATR Ratio vs SMA(50)",      minval=0.5, maxval=1.5, step=0.05, group=grp_sideway, tooltip="ATR(14) ต้องไม่ต่ำกว่า X% ของ ATR SMA(50)")
+
+// --- Loss Cooldown Filter ---
+grp_cooldown        = "== Loss Cooldown Filter =="
+use_loss_cooldown   = input.bool(true, title="Enable Cooldown After Loss", group=grp_cooldown, tooltip="พักเปิดไม้ใหม่หลังจากปิดสถานะขาดทุน")
+loss_cooldown_mins  = input.int(60, title="Cooldown Duration (Minutes)", minval=1, group=grp_cooldown)
 
 // -- Webhook --
 grp_wh        = "== Webhook =="
@@ -520,17 +525,26 @@ trend_turned_bear = ta.change(trend) != 0 and trend == -1
 // Daily Risk Management (Max Loss Trades)
 // ==========================================
 var int daily_loss_count = 0
+var int last_loss_exit_time = na
+var bool last_trade_was_loss = false
 daily_reset_tz = daily_loss_timezone == "Exchange" ? syminfo.timezone : daily_loss_timezone
 is_new_risk_day = year(time, daily_reset_tz) != year(time[1], daily_reset_tz) or month(time, daily_reset_tz) != month(time[1], daily_reset_tz) or dayofmonth(time, daily_reset_tz) != dayofmonth(time[1], daily_reset_tz)
 if is_new_risk_day
     daily_loss_count := 0
 
 if strategy.closedtrades > nz(strategy.closedtrades[1], 0)
-    last_pnl = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    last_closed_index = strategy.closedtrades - 1
+    last_pnl = strategy.closedtrades.profit(last_closed_index)
     if last_pnl < 0
         daily_loss_count := daily_loss_count + 1
+        last_loss_exit_time := strategy.closedtrades.exit_time(last_closed_index)
+        last_trade_was_loss := true
+    else
+        last_trade_was_loss := false
 
 daily_loss_blocked = use_max_daily_losses and (daily_loss_count >= max_daily_loss_count)
+loss_cooldown_ms = loss_cooldown_mins * 60 * 1000
+loss_cooldown_blocked = use_loss_cooldown and last_trade_was_loss and not na(last_loss_exit_time) and (time_close - last_loss_exit_time < loss_cooldown_ms)
 
 bool longCondition  = false
 bool shortCondition = false
@@ -538,8 +552,8 @@ bool shortCondition = false
 if test_mode
     // [TEST MODE] เข้าทุก bar ที่ trend == 1/-1 (ไม่ต้องรอ PA/Zone)
     // ถ้ายังไม่ออก = BOS/trend ไม่ทำงาน ไม่ใช่ filter ปัญหา
-    longCondition  := trend == 1  and strategy.position_size == 0 and not in_force_close_time and not daily_loss_blocked
-    shortCondition := trend == -1 and strategy.position_size == 0 and not in_force_close_time and not daily_loss_blocked
+    longCondition  := trend == 1  and strategy.position_size == 0 and not in_force_close_time and not daily_loss_blocked and not loss_cooldown_blocked
+    shortCondition := trend == -1 and strategy.position_size == 0 and not in_force_close_time and not daily_loss_blocked and not loss_cooldown_blocked
 else
     // Normal mode: trend + PA + optional guards
     _long_base  = trend == 1  and bullish_pa and strategy.position_size == 0
@@ -554,8 +568,8 @@ else
     _long_choch  = not require_choch or choch_bull
     _short_choch = not require_choch or choch_bear
 
-    longCondition  := _long_base  and _long_zone  and _long_ema  and long_trend_ok  and not filter_blocked and not sideway_blocked and _long_choch and not in_force_close_time and not daily_loss_blocked
-    shortCondition := _short_base and _short_zone and _short_ema and short_trend_ok and not filter_blocked and not sideway_blocked and _short_choch and not in_force_close_time and not daily_loss_blocked
+    longCondition  := _long_base  and _long_zone  and _long_ema  and long_trend_ok  and not filter_blocked and not sideway_blocked and _long_choch and not in_force_close_time and not daily_loss_blocked and not loss_cooldown_blocked
+    shortCondition := _short_base and _short_zone and _short_ema and short_trend_ok and not filter_blocked and not sideway_blocked and _short_choch and not in_force_close_time and not daily_loss_blocked and not loss_cooldown_blocked
 
 // Bar labels สำหรับ diagnose (เปิดด้วย show_bar_debug)
 if show_bar_debug
@@ -573,7 +587,7 @@ bgcolor(shortCondition ? color.new(color.red,   80) : na, title="Debug Short")
 // ==========================================
 // Debug Table — แสดงสาเหตุที่ติดอยู่บนกราฟแบบ real-time
 // ==========================================
-var table dbg_tbl = table.new(position.top_right, 3, 14,
+var table dbg_tbl = table.new(position.top_right, 3, 15,
      bgcolor      = color.new(color.black, 15),
      border_width = 1,
      border_color = color.new(color.gray, 50))
@@ -666,6 +680,13 @@ if show_debug and barstate.islast
     table.cell(dbg_tbl, 0, 13, "Daily Loss", bgcolor=c_na, text_color=color.white, text_size=size.tiny)
     table.cell(dbg_tbl, 1, 13, _daily_lbl, bgcolor=(daily_loss_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
     table.cell(dbg_tbl, 2, 13, daily_loss_blocked ? "BLOCKED" : daily_reset_tz, bgcolor=(daily_loss_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
+
+    // Loss Cooldown
+    cooldown_remaining_mins = loss_cooldown_blocked ? math.ceil((loss_cooldown_ms - (time_close - last_loss_exit_time)) / 60000.0) : 0
+    cooldown_label = loss_cooldown_blocked ? str.tostring(cooldown_remaining_mins) + "m left" : "Clear"
+    table.cell(dbg_tbl, 0, 14, "Loss Cooldown", bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 14, cooldown_label, bgcolor=(loss_cooldown_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 14, cooldown_label, bgcolor=(loss_cooldown_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
 
 // ==========================================
 // Execution & Risk Management

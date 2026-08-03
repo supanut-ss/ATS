@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright   "Copyright 2026, Antigravity AI"
 #property link        "https://ats.info.com"
-#property version     "2.00"
-#property description "ATS MT5 EA v2 - Pure Structure (Liquidity+CHoCH+BOS+FVG/OB)"
+#property version     "2.10"
+#property description "ATS MT5 EA v2.1 - Pure Structure with HTF, CHoCH and daily risk guards"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -82,6 +82,10 @@ input int      InpChopLen              = 14;                    // ความ�
 input double   InpChopMaxThreshold     = 60.0;                  // ค่าสูงสุดของ CHOP ที่อนุญาต (หลีกเลี่ยงไซด์เวย์จัด)
 input bool     InpUseATRFilter         = true;                  // เปิดใช้งานตัวกรองภาวะตลาดบีบตัวแรงด้วย ATR Ratio
 input double   InpATRMinRatio          = 0.80;                  // อัตราส่วนความผันผวน ATR เทียบกับเส้นเฉลี่ย 50 วัน
+
+input group "== Loss Cooldown Filter =="
+input bool     InpUseLossCooldown      = true;                  // พักเปิดไม้ใหม่หลังปิดสถานะขาดทุน
+input int      InpLossCooldownMins     = 60;                    // ระยะเวลาพักหลังไม้แพ้ (นาที)
 
 input group "== Breakeven & Scaled Trailing Stop =="
 input int      InpBEPips               = 5000;                  // ระยะกำไรที่เริ่มเปิดใช้งานล็อคทุน Breakeven (Points)
@@ -588,6 +592,51 @@ bool IsVolumeSpikeActive(int sma_len, double multiplier, int lookback_bars)
    return false;
 }
 
+//+------------------------------------------------------------------+
+//| Return true while the most recent closed position is a loss and  |
+//| its configured cooldown window has not expired.                  |
+//+------------------------------------------------------------------+
+bool IsLossCooldownActive(string symbol, int &remaining_minutes)
+{
+   remaining_minutes = 0;
+   if(!InpUseLossCooldown)
+      return false;
+
+   datetime now = TimeCurrent();
+   if(!HistorySelect(now - 7 * 86400, now))
+      return false;
+
+   for(int i = HistoryDealsTotal() - 1; i >= 0; i--)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      long entry_type = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry_type != DEAL_ENTRY_OUT && entry_type != DEAL_ENTRY_INOUT && entry_type != DEAL_ENTRY_OUT_BY)
+         continue;
+      if(HistoryDealGetInteger(deal_ticket, DEAL_MAGIC) != InpMagic)
+         continue;
+      if(HistoryDealGetString(deal_ticket, DEAL_SYMBOL) != symbol)
+         continue;
+
+      double net_result = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT)
+                          + HistoryDealGetDouble(deal_ticket, DEAL_SWAP)
+                          + HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+      if(net_result >= 0.0)
+         return false;
+
+      datetime closed_at = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      int remaining_seconds = InpLossCooldownMins * 60 - (int)(now - closed_at);
+      if(remaining_seconds <= 0)
+         return false;
+
+      remaining_minutes = (remaining_seconds + 59) / 60;
+      return true;
+   }
+   return false;
+}
+
 // Detect FVG: Bullish FVG = high[2] < low[0]; Bearish FVG = low[2] > high[0]
 void DetectFVG(double &highs[], double &lows[])
 {
@@ -866,8 +915,13 @@ void ExecuteStrategyLogic()
      bool choch_long_ok  = !InpRequireCHoCH || choch_bull;
      bool choch_short_ok = !InpRequireCHoCH || choch_bear;
 
-     bool longCond  = (trend==1)  && choch_long_ok  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked;
-     bool shortCond = (trend==-1) && choch_short_ok && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked;
+     int cooldown_remaining = 0;
+     bool loss_cooldown_blocked = IsLossCooldownActive(Symbol(), cooldown_remaining);
+     if(loss_cooldown_blocked)
+        Print("ATS EA: Entry blocked by Loss Cooldown (", cooldown_remaining, " minutes remaining)");
+
+     bool longCond  = (trend==1)  && choch_long_ok  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
+     bool shortCond = (trend==-1) && choch_short_ok && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
 
    double pt        = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
    double tp_v      = InpTPPips * pt;
@@ -1018,6 +1072,12 @@ int OnInit()
       return(INIT_PARAMETERS_INCORRECT);
    }
 
+   if(InpUseLossCooldown && InpLossCooldownMins < 1)
+   {
+      Print("ATS EA ERROR: InpLossCooldownMins must be at least 1.");
+      return(INIT_PARAMETERS_INCORRECT);
+   }
+
    backend_url = InpBackendURL;
    if(StringSubstr(backend_url,StringLen(backend_url)-1,1)=="/")
       backend_url=StringSubstr(backend_url,0,StringLen(backend_url)-1);
@@ -1040,7 +1100,7 @@ int OnInit()
    InitStateFromHistory();
    InitTrackedPositions();
    EventSetMillisecondTimer(InpPollInterval);
-   Print("ATS EA v2.0 | Lot=",InpFixedLot," BE=",InpBEPips,"p Trail@",InpTrailLevel1Pips,"p->",InpTrailLevel1LockPips,"p TP=",InpTPPips,"p");
+   Print("ATS EA v2.1 | Lot=",InpFixedLot," BE=",InpBEPips,"p Trail@",InpTrailLevel1Pips,"p->",InpTrailLevel1LockPips,"p TP=",InpTPPips,"p");
    Print("ATS EA: Strategy = Liquidity + CHoCH + BOS + FVG/OB re-entry");
    return(INIT_SUCCEEDED);
 }
@@ -1169,6 +1229,14 @@ void ExecuteBuy(string id,string sym,double lot,double sl,double tp)
       return;
    }
 
+   int cooldown_remaining = 0;
+   if(IsLossCooldownActive(sym, cooldown_remaining))
+   {
+      Print("ATS EA: Webhook BUY blocked by Loss Cooldown (", cooldown_remaining, " minutes remaining)");
+      UpdateSignalStatus(id,"FAILED",0,0.0,0.0,0.0);
+      return;
+   }
+
    MqlTick tk; if(!SymbolInfoTick(sym,tk)) return;
    if(trade.Buy(lot,sym,tk.ask,sl,tp,"ATS BUY "+id))
    {
@@ -1185,6 +1253,14 @@ void ExecuteSell(string id,string sym,double lot,double sl,double tp)
    {
       Print("ATS EA: Webhook SELL blocked by Daily Loss Guard (", today_loss_count,
             "/", InpMaxDailyLossCount, " losing positions)");
+      UpdateSignalStatus(id,"FAILED",0,0.0,0.0,0.0);
+      return;
+   }
+
+   int cooldown_remaining = 0;
+   if(IsLossCooldownActive(sym, cooldown_remaining))
+   {
+      Print("ATS EA: Webhook SELL blocked by Loss Cooldown (", cooldown_remaining, " minutes remaining)");
       UpdateSignalStatus(id,"FAILED",0,0.0,0.0,0.0);
       return;
    }

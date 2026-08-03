@@ -137,13 +137,14 @@ Actions: `BUY` | `SELL` | `CLOSE` | `CLOSE_ALL` | `MODIFY`
 
 ดูไฟล์ `tradingview/ATS_MT5_EA.mq5` สำหรับสคริปต์ Expert Advisor ฉบับเต็ม
 
-**Pure Structure + Anti Fake-PA Logic:**
+**Pure Structure v2.1 + Anti Fake-PA Logic:**
 1. **Pivot High/Low & BOS/CHoCH** — ตรวจจับโครงสร้างการทำลายราคา (BOS/CHoCH) ย้อนหลัง 5 แท่งเทียน
 2. **FVG & Order Block Zones** — วางกรอบโซน Fair Value Gap และ Order Block บน M5
 3. **Premium / Discount Area** — กรองจุดซื้อขายด้วย Fibonacci 0.618 (BUY ที่ Discount / SELL ที่ Premium)
 4. **Anti Fake-PA Filter** — ตรวจสอบ 4 สัดส่วนแท่งเทียนก่อนเข้า (Body >= 35%, Wick <= 60%, Close Pos >= 45%, Engulfing Close)
 5. **Multi-Timeframe & Sideway Filters** — M5 EMA 200 + H1/H4 EMA 21, ADX >= 20, Choppiness Index <= 60, ATR Volatility Ratio >= 0.80, News & Volume Spike Filter
 6. **Breakeven & Stepped Trailing Stop** — BE ที่ $5.00 (5,000 pts), Trailing Stop ที่ $10.00 (10,000 pts), Hard TP ที่ $20.00 (20,000 pts)
+7. **Risk Guards** — Require directional CHoCH, Daily Loss Guard สูงสุด 4 ไม้แพ้/วัน และพัก 60 นาทีหลังไม้แพ้
 
 ---
 
@@ -155,6 +156,8 @@ Actions: `BUY` | `SELL` | `CLOSE` | `CLOSE_ALL` | `MODIFY`
 | `InpMagic` | `88188` | Magic Number แยกแยะออเดอร์ของ EA |
 | `InpSlippage` | `30 Points` | ระยะ Slippage สูงสุดที่ยอมรับได้ ($0.03) |
 | `InpEntryMode` | `0 (Discount Only)` | โหมดการเข้าโซน (0: Discount Only, 1: Any FVG/OB, 2: Strict ICT) |
+| `InpRequireCHoCH` | `true` | BUY ต้องมี Bullish CHoCH และ SELL ต้องมี Bearish CHoCH |
+| `InpSLBuffer` | `1.0 Point` | ระยะเผื่อ Structural SL คูณด้วย `SYMBOL_POINT` |
 | `InpUseFixedSL` | `true` | เปิดใช้งาน Stop Loss แบบคงที่ |
 | `InpFixedSLPips` | `5000 Points` | ระยะ Stop Loss แบบคงที่ ($5.00) |
 | `InpBEPips` | `5000 Points` | ระยะกำไรเปิดใช้งาน Breakeven SL ($5.00) |
@@ -162,6 +165,10 @@ Actions: `BUY` | `SELL` | `CLOSE` | `CLOSE_ALL` | `MODIFY`
 | `InpTrailLevel1LockPips` | `5000 Points` | ระยะล็อกกำไรขั้นต่ำของ Trailing Stop ($5.00) |
 | `InpUseSteppedTrail` | `true` | เปิดใช้งาน Trailing Stop แบบขยับตามระยะราคา (Stepped) |
 | `InpTPPips` | `20000 Points` | เป้าหมายกำไรสูงสุด Take Profit ($20.00) |
+| `InpUseDailyLossGuard` | `true` | หยุดเปิดไม้ใหม่เมื่อแพ้ครบ 4 สถานะในวันเดียวกัน |
+| `InpDailyLossTimezone` | `Asia/Bangkok` | เขตเวลาตัดวันของ Daily Loss Guard |
+| `InpUseLossCooldown` | `true` | พักเปิดไม้ใหม่หลังสถานะล่าสุดขาดทุน |
+| `InpLossCooldownMins` | `60` | ระยะเวลาพักหลังไม้แพ้ (นาที) |
 | `InpUseNewsFilter` | `true` | บล็อกการเทรดช่วงเวลาข่าวใหญ่ (`0300-0500,1930-2030:23456` UTC) |
 | `InpUseForceClose` | `true` | บังคับปิดออเดอร์ล้างพอร์ตอัตโนมัติ (`0400-0405:23456` BKK Time) |
 

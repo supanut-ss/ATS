@@ -116,3 +116,13 @@ out/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Generated deployment outputs
+deploy/
+
+# .NET build outputs
+[Bb]in/
+[Oo]bj/
+backend/wwwroot/assets/
+backend/wwwroot/*.br
+backend/wwwroot/*.gz
