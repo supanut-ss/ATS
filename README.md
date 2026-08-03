@@ -147,15 +147,18 @@ port, using only `/demo/api/*` plus `/demo/webhook`.
    `backend/appsettings.Demo.json`.
 2. Configure a different Demo webhook secret. Demo uses the same `MySql`
    connection as Main but writes to `demo_*` tables.
-3. Start the single backend normally:
+3. Create the Main and Demo tables once by running
+   `backend/sql/create_tables.sql` against the database selected by `MySql`.
+   The backend never creates or alters tables at runtime.
+4. Start the single backend normally:
 
 ```powershell
 dotnet run --project backend/ATS.Backend.csproj --launch-profile http
 ```
 
-4. Set the test EA `InpBackendURL` to `http://localhost:5000/demo` and use a different
+5. Set the test EA `InpBackendURL` to `http://localhost:5000/demo` and use a different
    `InpMagic` (or a separate MT5 Demo account).
-5. Send the second TradingView alert to `http://localhost:5000/demo/webhook` and view
+6. Send the second TradingView alert to `http://localhost:5000/demo/webhook` and view
    its isolated results at `/demo`.
 
 Demo API and webhook requests return `503` when `appsettings.Demo.json`,

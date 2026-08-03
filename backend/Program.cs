@@ -83,9 +83,8 @@ app.UseCors("AllowAll");
 if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 
-// ─── Startup: ensure tables & migrate legacy JSON ───────────────────
+// ─── Startup: migrate legacy JSON only (schema is managed by SQL scripts) ───
 var db = app.Services.GetRequiredService<DbRouter>();
-await db.EnsureTablesAsync();
 
 var legacyDbPath = Path.Combine(app.Environment.ContentRootPath, "signals_db.json");
 if (File.Exists(legacyDbPath))
@@ -619,13 +618,6 @@ public sealed class DbRouter
         ? _demo ?? throw new InvalidOperationException("Demo storage is not configured")
         : _main;
 
-    public async Task EnsureTablesAsync()
-    {
-        await _main.EnsureTablesAsync();
-        if (_demo != null)
-            await _demo.EnsureTablesAsync();
-    }
-
     public Task<List<Signal>> ReadSignalsAsync() => Current.ReadSignalsAsync();
     public Task<Signal?> GetSignalByIdAsync(string id) => Current.GetSignalByIdAsync(id);
     public Task UpsertSignalAsync(Signal signal) => Current.UpsertSignalAsync(signal);
@@ -704,73 +696,6 @@ public class DbService
     private MySqlConnection Open() => new MySqlConnection(_connStr);
 
     // ── Create tables ────────────────────────────────────────────────
-    public async Task EnsureTablesAsync()
-    {
-        await using var conn = Open();
-        await conn.OpenAsync();
-
-        var sql = $@"
-CREATE TABLE IF NOT EXISTS `{_signalsTable}` (
-    id           VARCHAR(30)  NOT NULL PRIMARY KEY,
-    signal_id    VARCHAR(100) NOT NULL DEFAULT '',
-    timestamp    DATETIME     NOT NULL,
-    bar_time     BIGINT       NOT NULL DEFAULT 0,
-    timeframe    VARCHAR(10)  NOT NULL DEFAULT '',
-    action       VARCHAR(10)  NOT NULL,
-    symbol       VARCHAR(20)  NOT NULL DEFAULT 'XAUUSD',
-    sl           DOUBLE       NOT NULL DEFAULT 0,
-    tp           DOUBLE       NOT NULL DEFAULT 0,
-    rr           DOUBLE       NOT NULL DEFAULT 0,
-    entry_price  DOUBLE       NOT NULL DEFAULT 0,
-    exit_price   DOUBLE       NOT NULL DEFAULT 0,
-    profit       DOUBLE       NOT NULL DEFAULT 0,
-    volume       DOUBLE       NOT NULL DEFAULT 0.01,
-    ticket       VARCHAR(30)  NOT NULL DEFAULT '',
-    status       VARCHAR(20)  NOT NULL DEFAULT 'PENDING_BUY',
-    comment      TEXT         NOT NULL,
-    updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS `{_webhookLogsTable}` (
-    id        BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    timestamp DATETIME     NOT NULL,
-    action    VARCHAR(30)  NOT NULL,
-    body      TEXT         NOT NULL,
-    result    TEXT,
-    error     TEXT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS `{_accountSnapshotsTable}` (
-    id             BIGINT   NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    timestamp      DATETIME NOT NULL,
-    balance        DOUBLE   NOT NULL DEFAULT 0,
-    equity         DOUBLE   NOT NULL DEFAULT 0,
-    free_margin    DOUBLE   NOT NULL DEFAULT 0,
-    bid            DOUBLE   NOT NULL DEFAULT 0,
-    ask            DOUBLE   NOT NULL DEFAULT 0,
-    open_positions INT      NOT NULL DEFAULT 0,
-    positions_json TEXT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-";
-        await using var cmd = new MySqlCommand(sql, conn);
-        await cmd.ExecuteNonQueryAsync();
-
-        // Alter table to add positions_json if it doesn't exist (support upgrade)
-        try
-        {
-            var alterSql = $"ALTER TABLE `{_accountSnapshotsTable}` ADD COLUMN positions_json TEXT;";
-            await using var alterCmd = new MySqlCommand(alterSql, conn);
-            await alterCmd.ExecuteNonQueryAsync();
-            Console.WriteLine($"[MySQL] Column 'positions_json' added to '{_accountSnapshotsTable}'.");
-        }
-        catch
-        {
-            // Ignore if column already exists
-        }
-
-        Console.WriteLine($"[MySQL] Tables ready: {_signalsTable}, {_webhookLogsTable}, {_accountSnapshotsTable}.");
-    }
-
     // ── Read all signals ─────────────────────────────────────────────
     public async Task<List<Signal>> ReadSignalsAsync()
     {
