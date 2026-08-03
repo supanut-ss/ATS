@@ -4,11 +4,11 @@ import {
   Divider, Alert,
 } from '@mui/material';
 import { TrendingUp, TrendingDown, Warning } from '@mui/icons-material';
-import { openTrade } from '../services/api';
+import { productionApi } from '../services/api';
 
 const H = 360;
 
-export default function ManualTradePanel({ price, risk, onRefresh }) {
+export default function ManualTradePanel({ price, risk, onRefresh, apiClient = productionApi }) {
   const [sl, setSl] = useState('');
   const [tp, setTp] = useState('');
   const [loading, setLoading] = useState(null);
@@ -18,7 +18,7 @@ export default function ManualTradePanel({ price, risk, onRefresh }) {
     setLoading(action);
     setResult(null);
     try {
-      const res = await openTrade(action, parseFloat(sl) || 0, parseFloat(tp) || 0);
+      const res = await apiClient.openTrade(action, parseFloat(sl) || 0, parseFloat(tp) || 0);
       if (res.ok && res.data?.ok) {
         setResult({ ok: true, message: `✓ ${action} queued · #${res.data.signalId}` });
         setSl(''); setTp('');

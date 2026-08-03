@@ -85,8 +85,10 @@ out/
 **/appsettings.json
 **/appsettings.Local.json
 **/appsettings.Production.json
+**/appsettings.Demo.json
 **/appsettings.*.local.json
 !**/appsettings.example.json
+!**/appsettings.Demo.example.json
 **/secrets.json
 **/credentials.json
 

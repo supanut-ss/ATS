@@ -1,99 +1,80 @@
 /**
- * api.js — Backend REST API service layer
- * Communicates with the Python Flask server running on localhost:5000
+ * API clients for the isolated production and script-test environments.
+ * /demo uses a second backend process (port 5001 by default).
  */
 
-export const BASE_URL = import.meta.env.VITE_API_URL ||
-  (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
-    ? "http://localhost:5000"
-    : "");
+const isLocalHost = typeof window !== 'undefined'
+  && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-async function apiCall(path, options = {}) {
-  try {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      headers: { "Content-Type": "application/json" },
-      ...options,
-    });
-    const data = await res.json();
-    return { ok: res.ok, data };
-  } catch (err) {
-    return { ok: false, data: { error: err.message || "Network error" } };
-  }
+export const BASE_URL = import.meta.env.VITE_API_URL
+  || (isLocalHost ? 'http://localhost:5000' : '');
+
+export const DEMO_BASE_URL = import.meta.env.VITE_DEMO_API_URL
+  || (typeof window !== 'undefined'
+    ? `${window.location.protocol}//${window.location.hostname}:5001`
+    : 'http://localhost:5001');
+
+export function createApiClient(baseUrl) {
+  const apiCall = async (path, options = {}) => {
+    try {
+      const res = await fetch(`${baseUrl}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      const data = await res.json();
+      return { ok: res.ok, data };
+    } catch (err) {
+      return { ok: false, data: { error: err.message || 'Network error' } };
+    }
+  };
+
+  return {
+    baseUrl,
+    getStatus:     () => apiCall('/api/status'),
+    connectMT5:    () => apiCall('/api/connect', { method: 'POST' }),
+    disconnectMT5: () => apiCall('/api/disconnect', { method: 'POST' }),
+    getAccount:    () => apiCall('/api/account'),
+    getPrice:      () => apiCall('/api/price'),
+    getPositions:  () => apiCall('/api/positions'),
+    getHistory:    (days = 7) => apiCall(`/api/history?days=${days}`),
+    getRisk:       () => apiCall('/api/risk'),
+    openTrade: (action, sl = 0, tp = 0) => apiCall('/api/trade', {
+      method: 'POST',
+      body: JSON.stringify({ action, sl, tp }),
+    }),
+    closePosition: (ticket) => apiCall(`/api/close/${ticket}`, { method: 'POST' }),
+    closeAllPositions: () => apiCall('/api/close-all', { method: 'POST' }),
+    modifyPosition: (ticket, sl, tp) => apiCall(`/api/modify/${ticket}`, {
+      method: 'POST',
+      body: JSON.stringify({ sl, tp }),
+    }),
+    getSignals:   () => apiCall('/api/signals'),
+    clearSignals: () => apiCall('/api/signals/clear', { method: 'POST' }),
+    getWebhookLog: () => apiCall('/api/webhook/log'),
+    sendTestWebhook: (payload) => apiCall('/webhook', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  };
 }
 
-// ──────────────────────────────────────────────
-// Status & Connection
-// ──────────────────────────────────────────────
-export const getStatus     = () => apiCall("/api/status");
-export const connectMT5    = () => apiCall("/api/connect",    { method: "POST" });
-export const disconnectMT5 = () => apiCall("/api/disconnect", { method: "POST" });
+export const productionApi = createApiClient(BASE_URL);
+export const demoApi = createApiClient(DEMO_BASE_URL);
+export const getApiClient = (isDemo = false) => isDemo ? demoApi : productionApi;
 
-// ──────────────────────────────────────────────
-// Market Data
-// ──────────────────────────────────────────────
-export const getAccount    = () => apiCall("/api/account");
-export const getPrice      = () => apiCall("/api/price");
-export const getPositions  = () => apiCall("/api/positions");
-export const getHistory    = (days = 7) => apiCall(`/api/history?days=${days}`);
-export const getRisk       = () => apiCall("/api/risk");
-
-// ──────────────────────────────────────────────
-// Trade Operations
-// ──────────────────────────────────────────────
-export const openTrade = (action, sl = 0, tp = 0) =>
-  apiCall("/api/trade", {
-    method: "POST",
-    body: JSON.stringify({ action, sl, tp }),
-  });
-
-export const closePosition = (ticket) =>
-  apiCall(`/api/close/${ticket}`, { method: "POST" });
-
-export const closeAllPositions = () =>
-  apiCall("/api/close-all", { method: "POST" });
-
-export const modifyPosition = (ticket, sl, tp) =>
-  apiCall(`/api/modify/${ticket}`, {
-    method: "POST",
-    body: JSON.stringify({ sl, tp }),
-  });
-
-// ──────────────────────────────────────────────
-// Signal performance tracking (for .NET Backend)
-// ──────────────────────────────────────────────
-export const getSignals    = () => apiCall("/api/signals");
-export const clearSignals  = () => apiCall("/api/signals/clear", { method: "POST" });
-export const getWebhookLog = () => apiCall("/api/webhook/log");
-
-export const sendTestWebhook = (action = "BUY") => {
-  const id = `dashboard_test_${Date.now()}`;
-  const price = 2650.0;
-  const payload = action === "BUY" || action === "SELL"
-    ? {
-        token: "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f",
-        action,
-        symbol: "XAUUSD",
-        signal_id: id,
-        entry_price: price,
-        sl: action === "BUY" ? price - 10 : price + 10,
-        tp: action === "BUY" ? price + 20 : price - 20,
-        rr: 2,
-        timeframe: "5",
-        bar_time: Date.now(),
-        comment: `Dashboard Test ${action}`,
-      }
-    : {
-        token: "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f",
-        action: "CLOSE_SIGNAL",
-        symbol: "XAUUSD",
-        signal_id: id,
-        entry_price: price - 10,
-        exit_price: price,
-        profit: action === "WIN" ? 200 : -100,
-        result: action,
-        timeframe: "5",
-        bar_time: Date.now(),
-      };
-  return apiCall("/webhook", { method: "POST", body: JSON.stringify(payload) });
-};
-
+// Backward-compatible production exports for components not mounted by App yet.
+export const getStatus = productionApi.getStatus;
+export const connectMT5 = productionApi.connectMT5;
+export const disconnectMT5 = productionApi.disconnectMT5;
+export const getAccount = productionApi.getAccount;
+export const getPrice = productionApi.getPrice;
+export const getPositions = productionApi.getPositions;
+export const getHistory = productionApi.getHistory;
+export const getRisk = productionApi.getRisk;
+export const openTrade = productionApi.openTrade;
+export const closePosition = productionApi.closePosition;
+export const closeAllPositions = productionApi.closeAllPositions;
+export const modifyPosition = productionApi.modifyPosition;
+export const getSignals = productionApi.getSignals;
+export const clearSignals = productionApi.clearSignals;
+export const getWebhookLog = productionApi.getWebhookLog;

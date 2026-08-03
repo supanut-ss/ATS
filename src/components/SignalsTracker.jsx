@@ -7,7 +7,7 @@ import {
   ShowChart, CheckCircle, HourglassEmpty,
   TrendingUp, TrendingDown, Toll, DeleteSweep,
 } from '@mui/icons-material';
-import { clearSignals } from '../services/api';
+import { productionApi } from '../services/api';
 
 const fmt = (v, d = 2) =>
   v == null ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -51,14 +51,15 @@ function StatCard({ label, value, color, icon, subtitle }) {
   );
 }
 
-export default function SignalsTracker({ signals, loading, onRefresh }) {
+export default function SignalsTracker({ signals, loading, onRefresh, apiClient = productionApi, actionsDisabled = false }) {
   const [clearing, setClearing] = useState(false);
 
   const handleClear = async () => {
+    if (actionsDisabled) return;
     if (!confirm('ล้างสัญญาณทั้งหมด?')) return;
     setClearing(true);
     try {
-      const res = await clearSignals();
+      const res = await apiClient.clearSignals();
       if (res.ok) {
         onRefresh?.();
       } else {
@@ -101,7 +102,7 @@ export default function SignalsTracker({ signals, loading, onRefresh }) {
             color="error"
             variant="outlined"
             startIcon={<DeleteSweep />}
-            disabled={clearing}
+            disabled={actionsDisabled || clearing}
             onClick={handleClear}
             sx={{ borderColor: 'rgba(244,63,94,0.4)' }}
           >

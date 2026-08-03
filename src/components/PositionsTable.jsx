@@ -5,7 +5,7 @@ import {
   DialogContent, DialogActions, TextField, Tooltip,
 } from '@mui/material';
 import { Close, Edit, TrendingUp, TrendingDown } from '@mui/icons-material';
-import { closePosition, closeAllPositions, modifyPosition } from '../services/api';
+import { productionApi } from '../services/api';
 
 const fmt = (v, d = 2) => v == null ? '—' : Number(v).toFixed(d);
 const fmtPnl = (v) => {
@@ -15,25 +15,27 @@ const fmtPnl = (v) => {
 
 const H = 240;
 
-export default function PositionsTable({ positions = [], onRefresh }) {
+export default function PositionsTable({ positions = [], onRefresh, apiClient = productionApi, actionsDisabled = false }) {
   const [modifyDialog, setModifyDialog] = useState(null);
   const [closing, setClosing] = useState(null);
 
   const handleClose = async (ticket) => {
+    if (actionsDisabled) return;
     setClosing(ticket);
-    await closePosition(ticket);
+    await apiClient.closePosition(ticket);
     setClosing(null);
     onRefresh?.();
   };
 
   const handleCloseAll = async () => {
-    await closeAllPositions();
+    if (actionsDisabled) return;
+    await apiClient.closeAllPositions();
     onRefresh?.();
   };
 
   const handleModify = async () => {
-    if (!modifyDialog) return;
-    await modifyPosition(modifyDialog.ticket, parseFloat(modifyDialog.sl), parseFloat(modifyDialog.tp));
+    if (!modifyDialog || actionsDisabled) return;
+    await apiClient.modifyPosition(modifyDialog.ticket, parseFloat(modifyDialog.sl), parseFloat(modifyDialog.tp));
     setModifyDialog(null);
     onRefresh?.();
   };
@@ -77,6 +79,7 @@ export default function PositionsTable({ positions = [], onRefresh }) {
         {positions.length > 0 && (
           <Button
             variant="outlined" color="error" size="small"
+            disabled={actionsDisabled}
             onClick={handleCloseAll}
             sx={{
               borderColor: 'rgba(244,63,94,0.35)', color: '#f43f5e', fontSize: '0.68rem',
@@ -186,6 +189,7 @@ export default function PositionsTable({ positions = [], onRefresh }) {
                         <IconButton
                           size="small"
                           onClick={() => setModifyDialog({ ticket: p.ticket, sl: p.sl || '', tp: p.tp || '' })}
+                          disabled={actionsDisabled}
                           sx={{ color: 'text.disabled', '&:hover': { color: '#818cf8' }, p: 0.4 }}
                         >
                           <Edit sx={{ fontSize: 13 }} />
@@ -194,7 +198,7 @@ export default function PositionsTable({ positions = [], onRefresh }) {
                       <Tooltip title="Close Position">
                         <IconButton
                           size="small"
-                          disabled={closing === p.ticket}
+                          disabled={actionsDisabled || closing === p.ticket}
                           onClick={() => handleClose(p.ticket)}
                           sx={{ color: 'text.disabled', '&:hover': { color: '#f43f5e' }, p: 0.4 }}
                         >
@@ -228,7 +232,7 @@ export default function PositionsTable({ positions = [], onRefresh }) {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setModifyDialog(null)} color="inherit">Cancel</Button>
-          <Button onClick={handleModify} variant="contained">Apply</Button>
+          <Button onClick={handleModify} variant="contained" disabled={actionsDisabled}>Apply</Button>
         </DialogActions>
       </Dialog>
     </Paper>

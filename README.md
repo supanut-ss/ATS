@@ -137,6 +137,32 @@ Actions: `BUY` | `SELL` | `CLOSE` | `CLOSE_ALL` | `MODIFY`
 
 ---
 
+## Isolated Demo dashboard and webhook (port 5001)
+
+The main dashboard remains at `/` and uses the main backend on port `5000`.
+The second script-test dashboard is available at `/demo` and uses only the Demo
+backend on port `5001`.
+
+1. Copy `backend/appsettings.Demo.example.json` to
+   `backend/appsettings.Demo.json`.
+2. Configure `ConnectionStrings:DemoMySql` with a database that is separate from
+   the main ATS database, and use a different Demo webhook secret.
+3. Start the isolated backend with `./start-demo.ps1`, or run:
+
+```powershell
+dotnet run --project backend/ATS.Backend.csproj --launch-profile demo
+```
+
+4. Set the test EA `InpBackendURL` to `http://localhost:5001` and use a different
+   `InpMagic` (or a separate MT5 Demo account).
+5. Send the second TradingView alert to `http://localhost:5001/webhook` and view
+   its isolated results at `/demo`.
+
+The Demo backend fails closed when `appsettings.Demo.json`,
+`DemoSettings:Isolated=true`, or `ConnectionStrings:DemoMySql` is missing. For a
+remote deployment, set `VITE_DEMO_API_URL` to the HTTPS reverse-proxy address for
+the Demo backend; exposing raw port 5001 publicly is not required.
+
 ## Strategy & EA Parameters Reference (ATS_MT5_EA.mq5)
 
 ดูไฟล์ `tradingview/ATS_MT5_EA.mq5` สำหรับสคริปต์ Expert Advisor ฉบับเต็ม

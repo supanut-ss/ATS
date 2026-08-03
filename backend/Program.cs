@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
+var isDemoEnvironment = builder.Environment.IsEnvironment("Demo");
 
 builder.Services.AddOpenApi();
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -17,8 +18,21 @@ builder.Services.AddCors(options =>
         policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 });
 
-var connStr = builder.Configuration.GetConnectionString("MySql")
-    ?? throw new InvalidOperationException("MySQL connection string not configured");
+var connStr = isDemoEnvironment
+    ? builder.Configuration.GetConnectionString("DemoMySql")
+    : builder.Configuration.GetConnectionString("MySql");
+
+if (string.IsNullOrWhiteSpace(connStr))
+{
+    var key = isDemoEnvironment ? "ConnectionStrings:DemoMySql" : "ConnectionStrings:MySql";
+    throw new InvalidOperationException($"{key} is not configured");
+}
+
+if (isDemoEnvironment && !builder.Configuration.GetValue<bool>("DemoSettings:Isolated"))
+    throw new InvalidOperationException(
+        "Demo backend refused to start without DemoSettings:Isolated=true. " +
+        "Create appsettings.Demo.json from appsettings.Demo.example.json and use a separate database.");
+
 builder.Services.AddSingleton(new DbService(connStr));
 
 var app = builder.Build();
@@ -318,6 +332,8 @@ app.MapGet("/api/status", async () =>
     return Results.Json(new
     {
         ok               = true,
+        instance         = isDemoEnvironment ? "demo" : "main",
+        environment      = app.Environment.EnvironmentName,
         mode             = "mql5_ea",
         open_trades      = openCount,
         pending_signals  = pendingCount,

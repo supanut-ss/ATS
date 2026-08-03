@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   ThemeProvider, createTheme, CssBaseline, Box,
-  AppBar, Toolbar, Typography, IconButton, Grid, Button, Tooltip, CircularProgress,
+  AppBar, Toolbar, Typography, IconButton, Button, Tooltip, CircularProgress,
   Chip, Dialog, DialogTitle, DialogContent, DialogActions,
+  Alert,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -21,11 +22,7 @@ import SignalsTracker    from './components/SignalsTracker';
 import QuickOverview     from './components/QuickOverview';
 import WorldCupPredictions from './components/WorldCupPredictions';
 
-import {
-  getStatus, getAccount, getPrice,
-  getPositions, getHistory, getRisk,
-  connectMT5, disconnectMT5, getSignals,
-} from './services/api';
+import { getApiClient } from './services/api';
 
 const theme = createTheme({
   palette: {
@@ -65,12 +62,11 @@ const theme = createTheme({
 });
 
 export default function App() {
-  if (window.location.pathname === '/trade') {
-    window.location.replace('/');
-    return null;
-  }
-
-  const isTradeRoute = window.location.pathname !== '/wc2026';
+  const requestedPath = window.location.pathname.replace(/\/$/, '') || '/';
+  const currentPath = requestedPath === '/trade' ? '/' : requestedPath;
+  const isDemoRoute = currentPath === '/demo';
+  const isTradeRoute = currentPath !== '/wc2026';
+  const apiClient = getApiClient(isDemoRoute);
 
   const [guideOpen, setGuideOpen]     = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -87,15 +83,17 @@ export default function App() {
   const [lastRefresh, setLastRefresh] = useState(null);
 
   const connected = status?.mt5_connected || false;
+  const expectedInstance = isDemoRoute ? 'demo' : 'main';
+  const instanceMismatch = Boolean(status?.instance && status.instance !== expectedInstance);
 
   const fetchAll = useCallback(async (isBackground = false) => {
     if (!isTradeRoute) return;
     if (!isBackground) setLoading(true);
     try {
       const [s, a, p, pos, h, r, sigs] = await Promise.all([
-        getStatus(), getAccount(), getPrice(),
-        getPositions(), getHistory(), getRisk(),
-        getSignals(),
+        apiClient.getStatus(), apiClient.getAccount(), apiClient.getPrice(),
+        apiClient.getPositions(), apiClient.getHistory(), apiClient.getRisk(),
+        apiClient.getSignals(),
       ]);
       if (s.ok)   setStatus(s.data);
       if (a.ok)   setAccount(a.data);
@@ -108,22 +106,28 @@ export default function App() {
     } finally {
       if (!isBackground) setLoading(false);
     }
-  }, [isTradeRoute]);
+  }, [isTradeRoute, apiClient]);
 
   useEffect(() => {
+    if (requestedPath === '/trade') {
+      window.location.replace('/');
+      return;
+    }
     if (!isTradeRoute) return;
     fetchAll(false);
     const id = setInterval(() => fetchAll(true), 5000);
     return () => clearInterval(id);
-  }, [fetchAll, isTradeRoute]);
+  }, [fetchAll, isTradeRoute, requestedPath]);
 
   const handleConnect = async () => {
-    const res = await connectMT5();
+    if (instanceMismatch) return;
+    const res = await apiClient.connectMT5();
     if (res.ok) fetchAll();
   };
 
   const handleDisconnect = async () => {
-    await disconnectMT5();
+    if (instanceMismatch) return;
+    await apiClient.disconnectMT5();
     setStatus(s => ({ ...s, mt5_connected: false }));
     setAccount(null);
     setPositions([]);
@@ -157,7 +161,7 @@ export default function App() {
         sx={{
           bgcolor: 'rgba(11,15,25,0.75)',
           backdropFilter: 'blur(12px)',
-          borderBottom: '1px solid rgba(255,255,255,0.05)',
+          borderBottom: isDemoRoute ? '2px solid rgba(245,158,11,0.65)' : '1px solid rgba(255,255,255,0.05)',
           boxShadow: 'none',
         }}
       >
@@ -166,7 +170,7 @@ export default function App() {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <Box sx={{
               p: 0.7, borderRadius: 1.5,
-              background: 'linear-gradient(135deg,#6366f1,#d97706)',
+              background: isDemoRoute ? 'linear-gradient(135deg,#f59e0b,#ef4444)' : 'linear-gradient(135deg,#6366f1,#d97706)',
               display: 'flex',
               alignItems: 'center',
             }}>
@@ -174,16 +178,26 @@ export default function App() {
             </Box>
             <Box>
               <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1, background: 'linear-gradient(90deg,#fbbf24,#f59e0b)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                XAUUSD Bot Dashboard
+                {isDemoRoute ? 'Script Test Dashboard' : 'XAUUSD Bot Dashboard'}
               </Typography>
               <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontSize: '0.7rem' }}>
-                Exness Demo · Automated Pure Structure EA
+                {isDemoRoute ? 'ISOLATED DEMO · Backend port 5001' : 'MAIN · Automated Pure Structure EA'}
               </Typography>
             </Box>
           </Box>
 
           {/* Center/Right Status and Actions */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Chip
+              label={isDemoRoute ? 'DEMO / TEST' : 'MAIN'}
+              size="small"
+              color={isDemoRoute ? 'warning' : 'primary'}
+              sx={{ fontWeight: 900, letterSpacing: 0.6 }}
+            />
+            <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 0.5 }}>
+              <Button size="small" href="/" variant={!isDemoRoute ? 'contained' : 'text'}>Main</Button>
+              <Button size="small" href="/demo" color="warning" variant={isDemoRoute ? 'contained' : 'text'}>Demo</Button>
+            </Box>
             {lastRefresh && (
               <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', lg: 'block' } }}>
                 อัปเดต {lastRefresh.toLocaleTimeString('th-TH')}
@@ -248,6 +262,7 @@ export default function App() {
               <Button
                 variant="contained"
                 onClick={connected ? handleDisconnect : handleConnect}
+                disabled={instanceMismatch}
                 color={connected ? 'error' : 'primary'}
                 size="medium"
                 startIcon={connected ? <LinkOff /> : <LinkIcon />}
@@ -276,9 +291,23 @@ export default function App() {
           pt: { xs: 11, sm: 12 },
           minHeight: '100vh',
           bgcolor: 'background.default',
+          backgroundImage: isDemoRoute ? 'linear-gradient(180deg,rgba(245,158,11,0.055),transparent 360px)' : 'none',
         }}
       >
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5, maxWidth: '1440px', mx: 'auto' }}>
+          {instanceMismatch && (
+            <Alert severity="error" variant="filled">
+              <strong>หยุดใช้งาน:</strong> หน้านี้ต้องเชื่อมต่อ Backend <code>{expectedInstance}</code> แต่ได้รับข้อมูลจาก
+              <code style={{ marginLeft: 6 }}>{status.instance}</code> กรุณาตรวจค่า URL ก่อนส่งคำสั่งเทรด
+            </Alert>
+          )}
+          {isDemoRoute && (
+            <Alert severity="warning" variant="outlined" sx={{ borderWidth: 2 }}>
+              <strong>พื้นที่ทดสอบแยกจากระบบหลัก</strong> — Dashboard นี้อ่านและส่งคำสั่งเฉพาะ Backend
+              <code style={{ marginLeft: 6 }}>{apiClient.baseUrl}</code> และ Webhook
+              <code style={{ marginLeft: 6 }}>{apiClient.baseUrl}/webhook</code>
+            </Alert>
+          )}
           
           {/* 1. Quick Statistics Strip */}
           <QuickOverview
@@ -292,10 +321,10 @@ export default function App() {
           {/* 2. Main content layout */}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5 }}>
             {/* Active Positions */}
-            <PositionsTable positions={positions} onRefresh={fetchAll} />
+            <PositionsTable positions={positions} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={instanceMismatch} />
             
             {/* Signals Tracker */}
-            <SignalsTracker signals={signals} loading={loading} onRefresh={fetchAll} />
+            <SignalsTracker signals={signals} loading={loading} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={instanceMismatch} />
           </Box>
         </Box>
       </Box>
@@ -323,7 +352,7 @@ export default function App() {
           </IconButton>
         </DialogTitle>
         <DialogContent dividers sx={{ borderColor: 'rgba(255,255,255,0.05)', px: { xs: 2, sm: 3 } }}>
-          <WebhookGuide serverStatus={connected} />
+          <WebhookGuide serverStatus={connected} environment={isDemoRoute ? 'demo' : 'main'} backendUrl={apiClient.baseUrl} />
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button variant="contained" onClick={() => setGuideOpen(false)} sx={{ px: 3, borderRadius: 1.5 }}>

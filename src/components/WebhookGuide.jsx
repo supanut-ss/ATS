@@ -182,12 +182,19 @@ function CopyField({ label, value }) {
   );
 }
 
-export default function WebhookGuide({ serverStatus }) {
-  const localUrl = 'http://localhost:5000';
-  const liveUrl = window.location.origin;
+export default function WebhookGuide({ serverStatus, environment = 'main', backendUrl = '' }) {
+  const isDemo = environment === 'demo';
+  const localUrl = isDemo ? 'http://localhost:5001' : 'http://localhost:5000';
+  const liveUrl = backendUrl || (isDemo ? `${window.location.protocol}//${window.location.hostname}:5001` : window.location.origin);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {isDemo && (
+        <Alert severity="warning" variant="outlined" sx={{ borderWidth: 2 }}>
+          คู่มือนี้เป็นของ <strong>Demo/Test Backend พอร์ต 5001</strong> ห้ามใช้ URL นี้กับ EA ระบบหลัก และควรตั้ง
+          <strong> InpMagic</strong> คนละค่ากับ EA หลัก (หรือใช้บัญชี MT5 Demo แยก)
+        </Alert>
+      )}
       {/* --- Section 1: Guide Details --- */}
       <Paper sx={{ p: 3, border: '1px solid rgba(255,255,255,0.06)', bgcolor: 'background.paper' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
@@ -213,6 +220,7 @@ export default function WebhookGuide({ serverStatus }) {
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mb: 3 }}>
           <CopyField label="Backend Base URL (Local)" value={localUrl} />
           <CopyField label="Backend Base URL (เซิร์ฟเวอร์จริง)" value={liveUrl} />
+          <CopyField label="TradingView Webhook URL" value={`${liveUrl}/webhook`} />
         </Box>
 
         <Divider sx={{ my: 3 }} />
