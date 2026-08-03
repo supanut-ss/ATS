@@ -18,18 +18,24 @@ strategy(
 // 1. Inputs
 // ==========================================
 pivot_length  = input.int(5,  title="Pivot Lookback Length", minval=1)
-sl_buffer     = input.float(1.0, title="SL Buffer (USD)")
+sl_buffer     = input.float(1.0, title="SL Buffer (Points)", minval=0.0, tooltip="Converted to price with syminfo.mintick, matching MT5 SYMBOL_POINT")
 max_sl_pips   = input.int(1000,  title="Max Structural SL (Pips/Points)")
 pd_threshold  = input.float(0.618, title="Premium/Discount Fib Threshold", minval=0.1, maxval=0.75, step=0.05)
 
 grp_entry    = "== Entry Logic =="
 entry_mode   = input.string("Discount/Premium Only (Original 54% WR)", title="Entry Zone Mode", options=["Discount/Premium Only (Original 54% WR)", "Any FVG/OB (High Frequency)", "FVG/OB Inside Discount/Premium (Strict ICT)"], group=grp_entry)
+require_choch = input.bool(true, title="Require Directional CHoCH", group=grp_entry, tooltip="BUY requires Bullish CHoCH; SELL requires Bearish CHoCH before BOS/trend entry")
 use_zone_filter = input.bool(true, title="Enable Zone Filter", group=grp_entry, tooltip="ปิด = ไม่ต้องรอ pullback ถึง Discount/Premium zone เข้าไม้ทันที่ trend + PA ตรง (เพิ่ม frequency มาก) | ใช้เพื่อ diagnose หาจุด block)")
 
 // --- Fixed Scalping SL ---
 grp_scalp    = "== Scalping Risk =="
 use_fixed_sl = input.bool(true, title="Use Fixed SL instead of Structure", group=grp_scalp, tooltip="ใช้ SL คงที่สำหรับสายสั้น แทนการอิง Swing Low/High")
 fixed_sl_pips= input.int(500, title="Fixed SL (Points/Pips)", group=grp_scalp, tooltip="500 point = $5.00 ระยะตัดขาดทุนจากจุดเข้า (เช่น Entry 4000 -> SL 3995)")
+// --- Daily Risk Management ---
+grp_daily_risk         = "== Daily Loss Guard =="
+use_max_daily_losses   = input.bool(true, title="Enable Daily Loss Guard", group=grp_daily_risk, tooltip="Block new entries after the configured number of losing positions")
+max_daily_loss_count   = input.int(4, title="Max Daily Losses", minval=1, group=grp_daily_risk)
+daily_loss_timezone    = input.string("Asia/Bangkok", title="Daily Reset Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_daily_risk)
 
 // --- M5 Anti Fake-PA ---
 grp_pa       = "== M5 Anti Fake-PA =="
@@ -38,7 +44,6 @@ pa_wick_max  = input.float(0.60, title="Max Wick Ratio (0.0–1.0)",   minval=0.
 pa_close_min = input.float(0.45, title="Min Close Position (0.0–1.0)",minval=0.1, maxval=0.9, step=0.05, group=grp_pa, tooltip="close ต้องอยู่ในช่วงบน/ล่าง X% ของ range | 0.45=45% เหมาะสำหรับ M5 XAUUSD")
 pa_engulf    = input.bool(true, title="Require Engulfing Close",                              group=grp_pa, tooltip="bullish: close ต้องปิดเหนือ open[1] | เปิด = เข้มสุดบน M5")
 bos_max_bars   = input.int(3,    title="Pending BOS Expiry (Bars)",   minval=1, maxval=10,  group=grp_pa, tooltip="Pending BOS จะถูกยกเลิกอัตโนมัติถ้าไม่ยืนยันภายใน N bar")
-choch_max_bars = input.int(20,   title="CHoCH Block Expiry (Bars)",   minval=5, maxval=100, group=grp_pa, tooltip="CHoCH flag จะหมดอายุอัตโนมัติหลัง N bar (M5: 20 bar = 100นาที)")
 
 // --- Debug ---
 grp_debug      = "== Debug =="
@@ -134,10 +139,14 @@ h1_bear = h1_close < h1_ema
 h4_bull = h4_close > h4_ema
 h4_bear = h4_close < h4_ema
 
+h1_data_ok = not na(h1_close) and not na(h1_ema)
+h4_data_ok = not na(h4_close) and not na(h4_ema)
+htf_data_ok = (not use_h1_trend or h1_data_ok) and (not use_h4_trend or h4_data_ok)
+
+htf_long_ok = htf_data_ok and (not use_h1_trend or h1_bull) and (not use_h4_trend or h4_bull)
+htf_short_ok = htf_data_ok and (not use_h1_trend or h1_bear) and (not use_h4_trend or h4_bear)
 is_counter_long  = (use_h1_trend and h1_bear) or (use_h4_trend and h4_bear)
 is_counter_short = (use_h1_trend and h1_bull) or (use_h4_trend and h4_bull)
-htf_bull = (not use_h1_trend or h1_bull) and (not use_h4_trend or h4_bull)
-htf_bear = (not use_h1_trend or h1_bear) and (not use_h4_trend or h4_bear)
 
 // ==========================================
 // Market Structure (Pivot High/Low + ZigZag)
@@ -157,11 +166,9 @@ var string last_pivot_type  = na
 var line   zigzag_line      = na
 var int    trend            = 0
 
-// CHoCH flags + bar tracker (สำหรับ auto-expiry)
-var bool choch_bull     = false
-var bool choch_bear     = false
-var int  choch_bull_bar = 0
-var int  choch_bear_bar = 0
+// Directional CHoCH confirmation remains valid for the active trend regime.
+var bool choch_bull = false
+var bool choch_bear = false
 
 // [FIX3] Pending BOS flags — ต้องยืนยัน 2 bar จึงเปลี่ยน trend + expiry counter (M5)
 var bool pending_bos_bull  = false
@@ -175,8 +182,7 @@ if not na(ph)
     last_ph_bar := bar_index - pivot_length
     // CHoCH Bear: new PH < prev PH in uptrend (trend change signal)
     if trend == 1 and not na(prev_ph) and last_ph < prev_ph
-        choch_bear     := true
-        choch_bear_bar := last_ph_bar  // บันทึกเวลาที่ CHoCH เกิด
+        choch_bear := true
         label.new(last_ph_bar, ph, "CHoCH", color=color.new(color.red,20), textcolor=color.white, size=size.small, style=label.style_label_down)
     if last_pivot_type == "L"
         zigzag_line     := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_ph_bar, y2=ph, color=color.new(color.orange,20), width=2)
@@ -200,8 +206,7 @@ if not na(pl)
     last_pl_bar := bar_index - pivot_length
     // CHoCH Bull: new PL > prev PL in downtrend (trend change signal)
     if trend == -1 and not na(prev_pl) and last_pl > prev_pl
-        choch_bull     := true
-        choch_bull_bar := last_pl_bar  // บันทึกเวลาที่ CHoCH เกิด
+        choch_bull := true
         label.new(last_pl_bar, pl, "CHoCH", color=color.new(color.green,20), textcolor=color.white, size=size.small, style=label.style_label_up)
     if last_pivot_type == "H"
         zigzag_line     := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_pl_bar, y2=pl, color=color.new(color.teal,20), width=2)
@@ -222,13 +227,6 @@ if not na(pl)
 // ==========================================
 // BOS (Break of Structure) — [FIX3] ต้องยืนยัน 2 แท่งติดต่อกัน
 // ==========================================
-// [CHoCH Auto-Expiry] ป้องกัน flag ค้างตลอดกาล — หมดอายุหลัง choch_max_bars bar
-if choch_bear and (bar_index - choch_bear_bar) >= choch_max_bars
-    choch_bear := false  // หมดอายุ — เปิด Long ได้อีกครั้ง
-
-if choch_bull and (bar_index - choch_bull_bar) >= choch_max_bars
-    choch_bull := false  // หมดอายุ — เปิด Short ได้อีกครั้ง
-
 // แท่งแรก: ตั้ง pending flag + บันทึก bar_index
 if trend <= 0 and close > last_ph and not pending_bos_bull
     pending_bos_bull := true
@@ -440,8 +438,9 @@ ema_buf       = ema_buffer_pips * syminfo.mintick
 // Buffer: Long แค่ต้องปิดอยู่เหนือ EMA - buffer, Short แค่ต้องปิดอยู่ต่ำกว่า EMA + buffer
 ema_long_cond  = use_ema ? (close > ema_line - ema_buf) : true
 ema_short_cond = use_ema ? (close < ema_line + ema_buf) : true
-long_trend_ok  = not filter_counter_trend or not htf_bear
-short_trend_ok = not filter_counter_trend or not htf_bull
+// Apply every enabled HTF filter first, then apply counter-trend rejection.
+long_trend_ok  = htf_long_ok and (not filter_counter_trend or not is_counter_long)
+short_trend_ok = htf_short_ok and (not filter_counter_trend or not is_counter_short)
 
 // ==========================================
 // Zone Confirmation
@@ -517,14 +516,30 @@ in_force_close_time = use_force_close and not na(time(timeframe.period, force_cl
 trend_turned_bull = ta.change(trend) != 0 and trend == 1
 trend_turned_bear = ta.change(trend) != 0 and trend == -1
 
+// ==========================================
+// Daily Risk Management (Max Loss Trades)
+// ==========================================
+var int daily_loss_count = 0
+daily_reset_tz = daily_loss_timezone == "Exchange" ? syminfo.timezone : daily_loss_timezone
+is_new_risk_day = year(time, daily_reset_tz) != year(time[1], daily_reset_tz) or month(time, daily_reset_tz) != month(time[1], daily_reset_tz) or dayofmonth(time, daily_reset_tz) != dayofmonth(time[1], daily_reset_tz)
+if is_new_risk_day
+    daily_loss_count := 0
+
+if strategy.closedtrades > nz(strategy.closedtrades[1], 0)
+    last_pnl = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    if last_pnl < 0
+        daily_loss_count := daily_loss_count + 1
+
+daily_loss_blocked = use_max_daily_losses and (daily_loss_count >= max_daily_loss_count)
+
 bool longCondition  = false
 bool shortCondition = false
 
 if test_mode
     // [TEST MODE] เข้าทุก bar ที่ trend == 1/-1 (ไม่ต้องรอ PA/Zone)
     // ถ้ายังไม่ออก = BOS/trend ไม่ทำงาน ไม่ใช่ filter ปัญหา
-    longCondition  := trend == 1  and strategy.position_size == 0 and not in_force_close_time
-    shortCondition := trend == -1 and strategy.position_size == 0 and not in_force_close_time
+    longCondition  := trend == 1  and strategy.position_size == 0 and not in_force_close_time and not daily_loss_blocked
+    shortCondition := trend == -1 and strategy.position_size == 0 and not in_force_close_time and not daily_loss_blocked
 else
     // Normal mode: trend + PA + optional guards
     _long_base  = trend == 1  and bullish_pa and strategy.position_size == 0
@@ -535,12 +550,12 @@ else
     // EMA filter (optional, default OFF)
     _long_ema   = ema_long_cond
     _short_ema  = ema_short_cond
-    // CHoCH guard (optional)
-    _long_choch  = not choch_bear
-    _short_choch = not choch_bull
+    // Directional CHoCH confirmation, matching the MT5 EA.
+    _long_choch  = not require_choch or choch_bull
+    _short_choch = not require_choch or choch_bear
 
-    longCondition  := _long_base  and _long_zone  and _long_ema  and long_trend_ok  and not filter_blocked and not sideway_blocked and _long_choch and not in_force_close_time
-    shortCondition := _short_base and _short_zone and _short_ema and short_trend_ok and not filter_blocked and not sideway_blocked and _short_choch and not in_force_close_time
+    longCondition  := _long_base  and _long_zone  and _long_ema  and long_trend_ok  and not filter_blocked and not sideway_blocked and _long_choch and not in_force_close_time and not daily_loss_blocked
+    shortCondition := _short_base and _short_zone and _short_ema and short_trend_ok and not filter_blocked and not sideway_blocked and _short_choch and not in_force_close_time and not daily_loss_blocked
 
 // Bar labels สำหรับ diagnose (เปิดด้วย show_bar_debug)
 if show_bar_debug
@@ -606,10 +621,12 @@ if show_debug and barstate.islast
     table.cell(dbg_tbl, 1, 5, ema_long_cond  ? "✓ Above" : "✗ Below", bgcolor=(ema_long_cond  ? c_ok : c_no), text_color=color.white, text_size=size.small)
     table.cell(dbg_tbl, 2, 5, ema_short_cond ? "✓ Below" : "✗ Above", bgcolor=(ema_short_cond ? c_ok : c_no), text_color=color.white, text_size=size.small)
 
-    // CHoCH block
-    table.cell(dbg_tbl, 0, 6, "CHoCH Block",     bgcolor=c_na,  text_color=color.white, text_size=size.small)
-    table.cell(dbg_tbl, 1, 6, choch_bear ? "⚠ BLOCKING" : "✓ Clear", bgcolor=(choch_bear ? c_no : c_ok), text_color=color.white, text_size=size.small)
-    table.cell(dbg_tbl, 2, 6, choch_bull ? "⚠ BLOCKING" : "✓ Clear", bgcolor=(choch_bull ? c_no : c_ok), text_color=color.white, text_size=size.small)
+    // Directional CHoCH confirmation
+    _dbg_choch_long  = not require_choch or choch_bull
+    _dbg_choch_short = not require_choch or choch_bear
+    table.cell(dbg_tbl, 0, 6, "CHoCH Confirm", bgcolor=c_na, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 6, _dbg_choch_long  ? "✓ Bull" : "✕ Required", bgcolor=(_dbg_choch_long  ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 6, _dbg_choch_short ? "✓ Bear" : "✕ Required", bgcolor=(_dbg_choch_short ? c_ok : c_no), text_color=color.white, text_size=size.small)
 
     // Pending BOS block
     table.cell(dbg_tbl, 0, 7, "Pend.BOS Block",  bgcolor=c_na,  text_color=color.white, text_size=size.small)
@@ -644,12 +661,11 @@ if show_debug and barstate.islast
     table.cell(dbg_tbl, 1, 12, longCondition  ? "🟢 LONG FIRE!"  : "🔴 NO ENTRY", bgcolor=(longCondition  ? c_ok : c_no), text_color=color.white, text_size=size.small)
     table.cell(dbg_tbl, 2, 12, shortCondition ? "🟢 SHORT FIRE!" : "🔴 NO ENTRY", bgcolor=(shortCondition ? c_ok : c_no), text_color=color.white, text_size=size.small)
 
-    // CHoCH bar remaining
-    int bear_remaining = choch_bear ? choch_max_bars - (bar_index - choch_bear_bar) : 0
-    int bull_remaining = choch_bull ? choch_max_bars - (bar_index - choch_bull_bar) : 0
-    table.cell(dbg_tbl, 0, 13, "CHoCH Expire",    bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
-    table.cell(dbg_tbl, 1, 13, choch_bear ? "⏳ " + str.tostring(bear_remaining) + " bars left" : "-", bgcolor=(choch_bear ? c_no : c_na), text_color=color.white, text_size=size.tiny)
-    table.cell(dbg_tbl, 2, 13, choch_bull ? "⏳ " + str.tostring(bull_remaining) + " bars left" : "-", bgcolor=(choch_bull ? c_no : c_na), text_color=color.white, text_size=size.tiny)
+    // Daily Loss Guard
+    _daily_lbl = str.tostring(daily_loss_count) + "/" + str.tostring(max_daily_loss_count)
+    table.cell(dbg_tbl, 0, 13, "Daily Loss", bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 13, _daily_lbl, bgcolor=(daily_loss_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 13, daily_loss_blocked ? "BLOCKED" : daily_reset_tz, bgcolor=(daily_loss_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
 
 // ==========================================
 // Execution & Risk Management
@@ -676,6 +692,7 @@ tp_val  = tp_pips  * syminfo.mintick
 be_val  = be_pips  * syminfo.mintick
 t1_val  = trail1_pips * syminfo.mintick
 lk_val  = lock1_pips  * syminfo.mintick
+sl_buffer_val = sl_buffer * syminfo.mintick
 
 // Minimum valid order quantity for TradingView symbol (prevents silent rejection when mincontract > fixed_lot)
 calc_qty = math.max(fixed_lot, syminfo.mincontract)
@@ -694,7 +711,7 @@ if test_mode
         strategy.exit("XSell", "Sell", stop=close + _sl_offset, limit=close - _tp_offset)
 
 if longCondition
-    sl_price   = use_fixed_sl ? (close - (fixed_sl_pips * syminfo.mintick)) : (nz(swing_low, close - (max_sl_pips * syminfo.mintick)) - sl_buffer)
+    sl_price   = use_fixed_sl ? (close - (fixed_sl_pips * syminfo.mintick)) : (nz(swing_low, close - (max_sl_pips * syminfo.mintick)) - sl_buffer_val)
     risk       = close - sl_price
     max_sl_val = max_sl_pips * syminfo.mintick
     if not use_fixed_sl and (na(risk) or risk > max_sl_val or risk <= 0)
@@ -713,7 +730,7 @@ if longCondition
         alert(f_open("BUY", close, sl_price, tp_price, s, calc_qty, be_pips, trail1_pips, lock1_pips, tp_pips), alert.freq_once_per_bar_close)
 
 if shortCondition
-    sl_price   = use_fixed_sl ? (close + (fixed_sl_pips * syminfo.mintick)) : (nz(swing_high, close + (max_sl_pips * syminfo.mintick)) + sl_buffer)
+    sl_price   = use_fixed_sl ? (close + (fixed_sl_pips * syminfo.mintick)) : (nz(swing_high, close + (max_sl_pips * syminfo.mintick)) + sl_buffer_val)
     risk       = sl_price - close
     max_sl_val = max_sl_pips * syminfo.mintick
     if not use_fixed_sl and (na(risk) or risk > max_sl_val or risk <= 0)

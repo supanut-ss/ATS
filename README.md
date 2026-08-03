@@ -133,28 +133,37 @@ Actions: `BUY` | `SELL` | `CLOSE` | `CLOSE_ALL` | `MODIFY`
 
 ---
 
-## Strategy: Liquidity Sweep & Volume Confirmation
+## Strategy & EA Parameters Reference (ATS_MT5_EA.mq5)
 
-ดูไฟล์ `tradingview/xauusd_liquidity_sweep.pine` สำหรับ Pine Script เต็ม
+ดูไฟล์ `tradingview/ATS_MT5_EA.mq5` สำหรับสคริปต์ Expert Advisor ฉบับเต็ม
 
-**Logic:**
-1. **Mark EQH/EQL** — หาจุด Equal Highs/Equal Lows เป็น Liquidity Pool
-2. **Wait for Sweep** — รอราคา Sweep ทะลุ EQH/EQL แล้วปิดกลับด้านใน
-3. **MSS Detection** — หลัง Sweep ต้องมี Market Structure Shift (BreakOC)
-4. **Volume Spike** — Candle ที่ Break โครงสร้างต้องมี Volume > เฉลี่ย × 1.5
-5. **Entry at FVG/OB** — เข้า Order ที่จุด confluence
-6. **SL** — วางไว้เหนือ/ใต้จุด Sweep + Buffer 2 USD
-7. **TP** — R:R 2:1 (กำหนดได้ใน Script Settings)
+**Pure Structure + Anti Fake-PA Logic:**
+1. **Pivot High/Low & BOS/CHoCH** — ตรวจจับโครงสร้างการทำลายราคา (BOS/CHoCH) ย้อนหลัง 5 แท่งเทียน
+2. **FVG & Order Block Zones** — วางกรอบโซน Fair Value Gap และ Order Block บน M5
+3. **Premium / Discount Area** — กรองจุดซื้อขายด้วย Fibonacci 0.618 (BUY ที่ Discount / SELL ที่ Premium)
+4. **Anti Fake-PA Filter** — ตรวจสอบ 4 สัดส่วนแท่งเทียนก่อนเข้า (Body >= 35%, Wick <= 60%, Close Pos >= 45%, Engulfing Close)
+5. **Multi-Timeframe & Sideway Filters** — M5 EMA 200 + H1/H4 EMA 21, ADX >= 20, Choppiness Index <= 60, ATR Volatility Ratio >= 0.80, News & Volume Spike Filter
+6. **Breakeven & Stepped Trailing Stop** — BE ที่ $5.00 (5,000 pts), Trailing Stop ที่ $10.00 (10,000 pts), Hard TP ที่ $20.00 (20,000 pts)
 
 ---
 
-## Risk Settings
+## EA Input Settings Summary
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `FIXED_LOT` | 0.05 | Fixed lot size ทุก Trade |
-| `MAX_POSITIONS` | 3 | จำนวน Position สูงสุด |
-| `MAX_DAILY_LOSS_USD` | $100 | หยุด Trade เมื่อขาดทุนถึงลิมิต |
+| Parameter | Default Value | Description |
+|-----------|---------------|-------------|
+| `InpFixedLot` | `0.05` | ขนาดสัญญา Fixed Lot ต่อการเปิดออเดอร์ |
+| `InpMagic` | `88188` | Magic Number แยกแยะออเดอร์ของ EA |
+| `InpSlippage` | `30 Points` | ระยะ Slippage สูงสุดที่ยอมรับได้ ($0.03) |
+| `InpEntryMode` | `0 (Discount Only)` | โหมดการเข้าโซน (0: Discount Only, 1: Any FVG/OB, 2: Strict ICT) |
+| `InpUseFixedSL` | `true` | เปิดใช้งาน Stop Loss แบบคงที่ |
+| `InpFixedSLPips` | `5000 Points` | ระยะ Stop Loss แบบคงที่ ($5.00) |
+| `InpBEPips` | `5000 Points` | ระยะกำไรเปิดใช้งาน Breakeven SL ($5.00) |
+| `InpTrailLevel1Pips` | `10000 Points` | ระยะกำไรเปิดใช้งาน Trailing Stop ($10.00) |
+| `InpTrailLevel1LockPips` | `5000 Points` | ระยะล็อกกำไรขั้นต่ำของ Trailing Stop ($5.00) |
+| `InpUseSteppedTrail` | `true` | เปิดใช้งาน Trailing Stop แบบขยับตามระยะราคา (Stepped) |
+| `InpTPPips` | `20000 Points` | เป้าหมายกำไรสูงสุด Take Profit ($20.00) |
+| `InpUseNewsFilter` | `true` | บล็อกการเทรดช่วงเวลาข่าวใหญ่ (`0300-0500,1930-2030:23456` UTC) |
+| `InpUseForceClose` | `true` | บังคับปิดออเดอร์ล้างพอร์ตอัตโนมัติ (`0400-0405:23456` BKK Time) |
 
 ---
 

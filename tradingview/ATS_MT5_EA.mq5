@@ -35,10 +35,16 @@ enum ENUM_ENTRY_MODE {
 };
 input group "== Entry Logic =="
 input ENUM_ENTRY_MODE InpEntryMode = ENTRY_MODE_DISCOUNT_ONLY;  // โหมดการเข้าซื้อขาย (Discount, FVG, Strict ICT)
+input bool     InpRequireCHoCH          = true;                  // Require directional CHoCH confirmation before entry
 
 input group "== Scalping Risk =="
 input bool     InpUseFixedSL           = true;                  // เปิดใช้งานการตั้งค่า Stop Loss แบบคงที่
 input int      InpFixedSLPips          = 5000;                  // ระยะ Stop Loss แบบคงที่ (Points)
+
+input group "== Daily Loss Guard =="
+input bool     InpUseDailyLossGuard    = true;                  // Stop opening new trades after the daily loss limit
+input int      InpMaxDailyLossCount    = 4;                     // Maximum losing positions per symbol and magic number
+input string   InpDailyLossTimezone    = "Asia/Bangkok";        // Daily reset timezone: UTC, Asia/Bangkok, America/New_York
 
 input group "== M5 Anti Fake-PA =="
 input double   InpPABodyMin            = 0.35;                  // อัตราส่วนเนื้อเทียนขั้นต่ำสำหรับยืนยัน Price Action
@@ -290,7 +296,9 @@ void InitTrackedPositions()
 
 bool GetHTFTrend(ENUM_TIMEFRAMES tf, int ema_len, bool &bull, bool &bear)
 {
-   bull = bear = true;
+   // Fail closed: an enabled HTF filter must not silently pass when its
+   // indicator data is unavailable.
+   bull = bear = false;
    int h = iMA(Symbol(), tf, ema_len, 0, MODE_EMA, PRICE_CLOSE);
    if(h == INVALID_HANDLE) return false;
    double eb[1], cb[1];
@@ -318,6 +326,95 @@ datetime GetTimeInTimezone(string timezone)
       return utc_time + offset * 3600;
    }
    return TimeCurrent();
+}
+
+//+------------------------------------------------------------------+
+//| Daily Loss Guard                                                  |
+//+------------------------------------------------------------------+
+struct DailyPositionResult
+{
+   ulong  position_id;
+   double pnl;
+   bool   has_exit;
+};
+
+datetime GetDailyStartTime(string timezone)
+{
+   datetime utc_now        = TimeGMT();
+   datetime server_now     = TimeCurrent();
+   datetime local_now      = GetTimeInTimezone(timezone);
+   int timezone_offset     = (int)(local_now - utc_now);
+   int trade_server_offset = (int)(server_now - utc_now);
+
+   MqlDateTime local_dt;
+   TimeToStruct(local_now, local_dt);
+   local_dt.hour = 0;
+   local_dt.min  = 0;
+   local_dt.sec  = 0;
+
+   // HistorySelect expects trade-server time. Convert configured midnight
+   // to UTC first, then express that instant in the broker server timezone.
+   return StructToTime(local_dt) - timezone_offset + trade_server_offset;
+}
+
+int GetTodayLossCount(string symbol)
+{
+   datetime day_start = GetDailyStartTime(InpDailyLossTimezone);
+   datetime now        = TimeCurrent();
+   if(day_start > now || !HistorySelect(day_start, now))
+      return 0;
+
+   DailyPositionResult results[];
+   int result_count = 0;
+   int deal_count = HistoryDealsTotal();
+
+   for(int i = 0; i < deal_count; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0) continue;
+      if(HistoryDealGetInteger(deal_ticket, DEAL_MAGIC) != InpMagic) continue;
+      if(HistoryDealGetString(deal_ticket, DEAL_SYMBOL) != symbol) continue;
+
+      ulong position_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+      if(position_id == 0) continue;
+
+      int idx = -1;
+      for(int j = 0; j < result_count; j++)
+      {
+         if(results[j].position_id == position_id) { idx = j; break; }
+      }
+      if(idx < 0)
+      {
+         idx = result_count++;
+         ArrayResize(results, result_count);
+         results[idx].position_id = position_id;
+         results[idx].pnl         = 0.0;
+         results[idx].has_exit    = false;
+      }
+
+      results[idx].pnl += HistoryDealGetDouble(deal_ticket, DEAL_PROFIT)
+                        + HistoryDealGetDouble(deal_ticket, DEAL_SWAP)
+                        + HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+
+      long entry_type = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry_type == DEAL_ENTRY_OUT || entry_type == DEAL_ENTRY_OUT_BY || entry_type == DEAL_ENTRY_INOUT)
+         results[idx].has_exit = true;
+   }
+
+   int loss_count = 0;
+   for(int i = 0; i < result_count; i++)
+      if(results[i].has_exit && results[i].pnl < 0.0) loss_count++;
+
+   return loss_count;
+}
+
+bool IsDailyLossBlocked(string symbol, int &loss_count)
+{
+   loss_count = 0;
+   if(!InpUseDailyLossGuard) return false;
+
+   loss_count = GetTodayLossCount(symbol);
+   return (loss_count >= InpMaxDailyLossCount);
 }
 
 //+------------------------------------------------------------------+
@@ -668,14 +765,27 @@ void ExecuteStrategyLogic()
       }
    }
 
-   // 9. HTF filter
-   bool h1b=true,h1r=true,h4b=true,h4r=true;
-   if(InpUseH1Trend) GetHTFTrend(PERIOD_H1,InpH1EMALen,h1b,h1r);
-   if(InpUseH4Trend) GetHTFTrend(PERIOD_H4,InpH4EMALen,h4b,h4r);
-   bool htfbull=(!InpUseH1Trend||h1b)&&(!InpUseH4Trend||h4b);
-   bool htfbear=(!InpUseH1Trend||h1r)&&(!InpUseH4Trend||h4r);
-   bool lok = !InpFilterCounterTrend||!htfbear;
-   bool sok = !InpFilterCounterTrend||!htfbull;
+   // 9. HTF filters: apply every enabled timeframe first, then apply the
+   // optional counter-trend rejection rule.
+   bool h1b=false,h1r=false,h4b=false,h4r=false;
+   bool h1_ready = !InpUseH1Trend || GetHTFTrend(PERIOD_H1,InpH1EMALen,h1b,h1r);
+   bool h4_ready = !InpUseH4Trend || GetHTFTrend(PERIOD_H4,InpH4EMALen,h4b,h4r);
+   bool htf_data_ok = h1_ready && h4_ready;
+
+   bool htf_long_ok = htf_data_ok
+                      && (!InpUseH1Trend || h1b)
+                      && (!InpUseH4Trend || h4b);
+   bool htf_short_ok = htf_data_ok
+                       && (!InpUseH1Trend || h1r)
+                       && (!InpUseH4Trend || h4r);
+
+   bool long_is_countertrend  = (InpUseH1Trend && h1r) || (InpUseH4Trend && h4r);
+   bool short_is_countertrend = (InpUseH1Trend && h1b) || (InpUseH4Trend && h4b);
+   bool lok = htf_long_ok  && (!InpFilterCounterTrend || !long_is_countertrend);
+   bool sok = htf_short_ok && (!InpFilterCounterTrend || !short_is_countertrend);
+
+   if(!htf_data_ok)
+      Print("ATS EA: Entry blocked because enabled HTF trend data is unavailable.");
 
    // 10. Entry conditions (one trade at a time, frequent entries)
    bool no_pos = (GetPositionCount()==0);
@@ -740,18 +850,28 @@ void ExecuteStrategyLogic()
     }
 
     bool in_force_close = false;
-    if(InpUseForceClose)
+     if(InpUseForceClose)
     {
        datetime time_in_tz = GetTimeInTimezone(InpForceCloseTimezone);
        if(IsInSessionString(time_in_tz, InpForceCloseSession))
-          in_force_close = true;
-    }
+           in_force_close = true;
+     }
 
-    bool longCond  = (trend==1)  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close;
-    bool shortCond = (trend==-1) && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close;
+     int today_loss_count = 0;
+     bool daily_loss_blocked = IsDailyLossBlocked(Symbol(), today_loss_count);
+     if(daily_loss_blocked)
+        Print("ATS EA: Entry blocked by Daily Loss Guard (", today_loss_count,
+              "/", InpMaxDailyLossCount, " losing positions, timezone=", InpDailyLossTimezone, ")");
 
-   double pt   = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
-   double tp_v = InpTPPips * pt;
+     bool choch_long_ok  = !InpRequireCHoCH || choch_bull;
+     bool choch_short_ok = !InpRequireCHoCH || choch_bear;
+
+     bool longCond  = (trend==1)  && choch_long_ok  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked;
+     bool shortCond = (trend==-1) && choch_short_ok && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked;
+
+   double pt        = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+   double tp_v      = InpTPPips * pt;
+   double sl_buffer = InpSLBuffer * pt;
 
    // 11. Execute BUY
    if(longCond)
@@ -760,8 +880,8 @@ void ExecuteStrategyLogic()
       if(InpUseFixedSL) {
           slp = cc - (InpFixedSLPips * pt);
       } else {
-          slp = swing_low - InpSLBuffer;
-          if(ob_bull_low>0 && ob_bull_low<slp) slp=ob_bull_low-InpSLBuffer;
+          slp = swing_low - sl_buffer;
+          if(ob_bull_low>0 && ob_bull_low<slp) slp=ob_bull_low-sl_buffer;
       }
       double risk = cc - slp;
       if(!InpUseFixedSL && (risk>InpMaxSLPips*pt||risk<=0)) { risk=InpMaxSLPips*pt; slp=cc-risk; }
@@ -780,8 +900,8 @@ void ExecuteStrategyLogic()
       if(InpUseFixedSL) {
           slp = cc + (InpFixedSLPips * pt);
       } else {
-          slp = swing_high + InpSLBuffer;
-          if(ob_bear_high>0 && ob_bear_high>slp) slp=ob_bear_high+InpSLBuffer;
+          slp = swing_high + sl_buffer;
+          if(ob_bear_high>0 && ob_bear_high>slp) slp=ob_bear_high+sl_buffer;
       }
       double risk = slp - cc;
       if(!InpUseFixedSL && (risk>InpMaxSLPips*pt||risk<=0)) { risk=InpMaxSLPips*pt; slp=cc+risk; }
@@ -886,6 +1006,18 @@ void CheckBEAndTrailing()
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   if(InpSLBuffer < 0.0)
+   {
+      Print("ATS EA ERROR: InpSLBuffer cannot be negative.");
+      return(INIT_PARAMETERS_INCORRECT);
+   }
+
+   if(InpUseDailyLossGuard && InpMaxDailyLossCount < 1)
+   {
+      Print("ATS EA ERROR: InpMaxDailyLossCount must be at least 1.");
+      return(INIT_PARAMETERS_INCORRECT);
+   }
+
    backend_url = InpBackendURL;
    if(StringSubstr(backend_url,StringLen(backend_url)-1,1)=="/")
       backend_url=StringSubstr(backend_url,0,StringLen(backend_url)-1);
@@ -1028,6 +1160,15 @@ void ProcessSignals(string ja)
 
 void ExecuteBuy(string id,string sym,double lot,double sl,double tp)
 {
+   int today_loss_count = 0;
+   if(IsDailyLossBlocked(sym, today_loss_count))
+   {
+      Print("ATS EA: Webhook BUY blocked by Daily Loss Guard (", today_loss_count,
+            "/", InpMaxDailyLossCount, " losing positions)");
+      UpdateSignalStatus(id,"FAILED",0,0.0,0.0,0.0);
+      return;
+   }
+
    MqlTick tk; if(!SymbolInfoTick(sym,tk)) return;
    if(trade.Buy(lot,sym,tk.ask,sl,tp,"ATS BUY "+id))
    {
@@ -1039,6 +1180,15 @@ void ExecuteBuy(string id,string sym,double lot,double sl,double tp)
 
 void ExecuteSell(string id,string sym,double lot,double sl,double tp)
 {
+   int today_loss_count = 0;
+   if(IsDailyLossBlocked(sym, today_loss_count))
+   {
+      Print("ATS EA: Webhook SELL blocked by Daily Loss Guard (", today_loss_count,
+            "/", InpMaxDailyLossCount, " losing positions)");
+      UpdateSignalStatus(id,"FAILED",0,0.0,0.0,0.0);
+      return;
+   }
+
    MqlTick tk; if(!SymbolInfoTick(sym,tk)) return;
    if(trade.Sell(lot,sym,tk.bid,sl,tp,"ATS SELL "+id))
    {
