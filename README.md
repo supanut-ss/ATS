@@ -145,8 +145,8 @@ port, using only `/demo/api/*` plus `/demo/webhook`.
 
 1. Copy `backend/appsettings.Demo.example.json` to
    `backend/appsettings.Demo.json`.
-2. Configure `ConnectionStrings:DemoMySql` with a database that is separate from
-   the main ATS database, and use a different Demo webhook secret.
+2. Configure a different Demo webhook secret. Demo uses the same `MySql`
+   connection as Main but writes to `demo_*` tables.
 3. Start the single backend normally:
 
 ```powershell
@@ -159,9 +159,10 @@ dotnet run --project backend/ATS.Backend.csproj --launch-profile http
    its isolated results at `/demo`.
 
 Demo API and webhook requests return `503` when `appsettings.Demo.json`,
-`DemoSettings:Isolated=true`, or `ConnectionStrings:DemoMySql` is missing. The
-main backend remains available. No additional firewall port or TLS endpoint is
-required because Main and Demo share the same HTTPS origin.
+`DemoSettings:Isolated=true`, or `DemoWebhookSettings:Secret` is missing. Main
+uses `signals`, `webhook_logs`, and `account_snapshots`; Demo uses the isolated
+`demo_signals`, `demo_webhook_logs`, and `demo_account_snapshots` tables in the
+same database. No additional firewall port or TLS endpoint is required.
 
 ## Strategy & EA Parameters Reference (ATS_MT5_EA.mq5)
 

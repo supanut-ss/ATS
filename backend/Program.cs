@@ -27,13 +27,13 @@ var connStr = builder.Configuration.GetConnectionString("MySql");
 if (string.IsNullOrWhiteSpace(connStr))
     throw new InvalidOperationException("ConnectionStrings:MySql is not configured");
 
-var demoConnStr = demoConfiguration.GetConnectionString("DemoMySql");
-var demoStorageConfigured = !string.IsNullOrWhiteSpace(demoConnStr)
-    && demoConfiguration.GetValue<bool>("DemoSettings:Isolated");
+var demoWebhookSecretConfig = demoConfiguration.GetValue<string>("DemoWebhookSettings:Secret");
+var demoStorageConfigured = demoConfiguration.GetValue<bool>("DemoSettings:Isolated")
+    && !string.IsNullOrWhiteSpace(demoWebhookSecretConfig);
 
 builder.Services.AddSingleton(sp => new DbRouter(
     new DbService(connStr),
-    demoStorageConfigured ? new DbService(demoConnStr!) : null,
+    demoStorageConfigured ? new DbService(connStr, "demo_") : null,
     sp.GetRequiredService<IHttpContextAccessor>()));
 
 var app = builder.Build();
@@ -113,8 +113,7 @@ if (File.Exists(legacyDbPath))
 // ─── Global config ───────────────────────────────────────────────────
 var webhookSecret = app.Configuration.GetValue<string>("WebhookSettings:Secret")
     ?? "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f";
-var demoWebhookSecret = demoConfiguration.GetValue<string>("DemoWebhookSettings:Secret")
-    ?? webhookSecret;
+var demoWebhookSecret = demoWebhookSecretConfig ?? webhookSecret;
 
 var rawJsonOptions = new JsonSerializerOptions
 {
@@ -687,8 +686,20 @@ public sealed class TradingRuntimeState
 public class DbService
 {
     private readonly string _connStr;
+    private readonly string _signalsTable;
+    private readonly string _webhookLogsTable;
+    private readonly string _accountSnapshotsTable;
 
-    public DbService(string connStr) => _connStr = connStr;
+    public DbService(string connStr, string tablePrefix = "")
+    {
+        if (tablePrefix is not ("" or "demo_"))
+            throw new ArgumentException("Unsupported database table prefix", nameof(tablePrefix));
+
+        _connStr = connStr;
+        _signalsTable = $"{tablePrefix}signals";
+        _webhookLogsTable = $"{tablePrefix}webhook_logs";
+        _accountSnapshotsTable = $"{tablePrefix}account_snapshots";
+    }
 
     private MySqlConnection Open() => new MySqlConnection(_connStr);
 
@@ -698,8 +709,8 @@ public class DbService
         await using var conn = Open();
         await conn.OpenAsync();
 
-        const string sql = @"
-CREATE TABLE IF NOT EXISTS signals (
+        var sql = $@"
+CREATE TABLE IF NOT EXISTS `{_signalsTable}` (
     id           VARCHAR(30)  NOT NULL PRIMARY KEY,
     signal_id    VARCHAR(100) NOT NULL DEFAULT '',
     timestamp    DATETIME     NOT NULL,
@@ -720,7 +731,7 @@ CREATE TABLE IF NOT EXISTS signals (
     updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS webhook_logs (
+CREATE TABLE IF NOT EXISTS `{_webhookLogsTable}` (
     id        BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
     timestamp DATETIME     NOT NULL,
     action    VARCHAR(30)  NOT NULL,
@@ -729,7 +740,7 @@ CREATE TABLE IF NOT EXISTS webhook_logs (
     error     TEXT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS account_snapshots (
+CREATE TABLE IF NOT EXISTS `{_accountSnapshotsTable}` (
     id             BIGINT   NOT NULL AUTO_INCREMENT PRIMARY KEY,
     timestamp      DATETIME NOT NULL,
     balance        DOUBLE   NOT NULL DEFAULT 0,
@@ -747,17 +758,17 @@ CREATE TABLE IF NOT EXISTS account_snapshots (
         // Alter table to add positions_json if it doesn't exist (support upgrade)
         try
         {
-            const string alterSql = "ALTER TABLE account_snapshots ADD COLUMN positions_json TEXT;";
+            var alterSql = $"ALTER TABLE `{_accountSnapshotsTable}` ADD COLUMN positions_json TEXT;";
             await using var alterCmd = new MySqlCommand(alterSql, conn);
             await alterCmd.ExecuteNonQueryAsync();
-            Console.WriteLine("[MySQL] Column 'positions_json' added to 'account_snapshots'.");
+            Console.WriteLine($"[MySQL] Column 'positions_json' added to '{_accountSnapshotsTable}'.");
         }
         catch
         {
             // Ignore if column already exists
         }
 
-        Console.WriteLine("[MySQL] Tables ready.");
+        Console.WriteLine($"[MySQL] Tables ready: {_signalsTable}, {_webhookLogsTable}, {_accountSnapshotsTable}.");
     }
 
     // ── Read all signals ─────────────────────────────────────────────
@@ -766,7 +777,7 @@ CREATE TABLE IF NOT EXISTS account_snapshots (
         await using var conn = Open();
         await conn.OpenAsync();
 
-        const string sql = "SELECT * FROM signals ORDER BY timestamp ASC";
+        var sql = $"SELECT * FROM `{_signalsTable}` ORDER BY timestamp ASC";
         await using var cmd = new MySqlCommand(sql, conn);
         await using var rdr = await cmd.ExecuteReaderAsync();
 
@@ -782,7 +793,7 @@ CREATE TABLE IF NOT EXISTS account_snapshots (
         await using var conn = Open();
         await conn.OpenAsync();
 
-        const string sql = "SELECT * FROM signals WHERE id = @id LIMIT 1";
+        var sql = $"SELECT * FROM `{_signalsTable}` WHERE id = @id LIMIT 1";
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@id", id);
         await using var rdr = await cmd.ExecuteReaderAsync();
@@ -795,8 +806,8 @@ CREATE TABLE IF NOT EXISTS account_snapshots (
         await using var conn = Open();
         await conn.OpenAsync();
 
-        const string sql = @"
-INSERT INTO signals
+        var sql = $@"
+INSERT INTO `{_signalsTable}`
     (id, signal_id, timestamp, bar_time, timeframe, action, symbol,
      sl, tp, rr, entry_price, exit_price, profit, volume, ticket, status, comment)
 VALUES
@@ -845,7 +856,7 @@ ON DUPLICATE KEY UPDATE
     {
         await using var conn = Open();
         await conn.OpenAsync();
-        await using var cmd = new MySqlCommand("TRUNCATE TABLE signals", conn);
+        await using var cmd = new MySqlCommand($"TRUNCATE TABLE `{_signalsTable}`", conn);
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -857,8 +868,8 @@ ON DUPLICATE KEY UPDATE
             await using var conn = Open();
             await conn.OpenAsync();
 
-            const string sql = @"
-INSERT INTO webhook_logs (timestamp, action, body, result, error)
+            var sql = $@"
+INSERT INTO `{_webhookLogsTable}` (timestamp, action, body, result, error)
 VALUES (@ts, @action, @body, @result, @error)";
             await using var cmd = new MySqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@ts",     DateTime.UtcNow);
@@ -880,7 +891,7 @@ VALUES (@ts, @action, @body, @result, @error)";
         await using var conn = Open();
         await conn.OpenAsync();
 
-        var sql = $"SELECT * FROM webhook_logs ORDER BY timestamp DESC LIMIT {count}";
+        var sql = $"SELECT * FROM `{_webhookLogsTable}` ORDER BY timestamp DESC LIMIT {count}";
         await using var cmd = new MySqlCommand(sql, conn);
         await using var rdr = await cmd.ExecuteReaderAsync();
 
@@ -907,7 +918,7 @@ VALUES (@ts, @action, @body, @result, @error)";
             await using var conn = Open();
             await conn.OpenAsync();
 
-            const string sql = "SELECT * FROM account_snapshots ORDER BY timestamp DESC LIMIT 1";
+            var sql = $"SELECT * FROM `{_accountSnapshotsTable}` ORDER BY timestamp DESC LIMIT 1";
             await using var cmd = new MySqlCommand(sql, conn);
             await using var rdr = await cmd.ExecuteReaderAsync();
 
@@ -948,15 +959,15 @@ VALUES (@ts, @action, @body, @result, @error)";
             try
             {
                 // Delete previous snapshots to keep only the latest one
-                const string deleteSql = "DELETE FROM account_snapshots";
+                var deleteSql = $"DELETE FROM `{_accountSnapshotsTable}`";
                 await using (var delCmd = new MySqlCommand(deleteSql, conn, trans))
                 {
                     await delCmd.ExecuteNonQueryAsync();
                 }
 
                 // Insert the new one
-                const string insertSql = @"
-INSERT INTO account_snapshots
+                var insertSql = $@"
+INSERT INTO `{_accountSnapshotsTable}`
     (timestamp, balance, equity, free_margin, bid, ask, open_positions, positions_json)
 VALUES (@ts, @balance, @equity, @free_margin, @bid, @ask, @open_positions, @positions_json)";
                 await using (var cmd = new MySqlCommand(insertSql, conn, trans))
