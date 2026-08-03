@@ -139,6 +139,14 @@ const EA_PARAMETERS = [
   { group: '== Loss Cooldown Filter ==', param: 'InpUseLossCooldown', defaultVal: 'true', desc: 'พักเปิดไม้ใหม่หลังจากสถานะล่าสุดปิดขาดทุน' },
   { group: '== Loss Cooldown Filter ==', param: 'InpLossCooldownMins', defaultVal: '60 นาที', desc: 'ระยะเวลาพักหลังไม้แพ้ ทั้งสัญญาณอัตโนมัติและ Webhook' },
 
+  { group: '== Early Exit Management ==', param: 'InpUseEarlyExit', defaultVal: 'true', desc: 'ปิดสถานะก่อนถึง Hard SL เมื่อโครงสร้างเสีย โดย Hard SL ยังคงทำงาน' },
+  { group: '== Early Exit Management ==', param: 'InpExitOnOppositeCHoCH', defaultVal: 'true', desc: 'ปิดเมื่อเกิด CHoCH ฝั่งตรงข้ามตามจำนวนแท่งยืนยัน' },
+  { group: '== Early Exit Management ==', param: 'InpExitOnStructureBreak', defaultVal: 'true', desc: 'ปิดเมื่อแท่งปิดทะลุ Pivot ฝั่งป้องกัน' },
+  { group: '== Early Exit Management ==', param: 'InpExitConfirmBars', defaultVal: '2 Bars', desc: 'จำนวนแท่งปิดที่ต้องยืนยันก่อน Early Exit' },
+  { group: '== Early Exit Management ==', param: 'InpExitOnHTFReversal', defaultVal: 'false', desc: 'เลือกเปิดเพื่อปิดเมื่อ H1/H4 ที่ใช้งานกลับทิศพร้อมกัน' },
+  { group: '== Early Exit Management ==', param: 'InpUseTimeStop / InpTimeStopBars', defaultVal: 'true / 12 Bars', desc: 'ปิดสถานะที่ยังไม่มีกำไรเมื่อถือครบจำนวนแท่ง' },
+  { group: '== Early Exit Management ==', param: 'InpEarlyExitRiskR', defaultVal: '0.70R', desc: 'เมื่อมีสัญญาณเสียและขาดทุนถึงระดับนี้ ให้ปิดโดยไม่รอครบแท่งยืนยัน' },
+
   { group: '== Breakeven & Trailing Stop ==', param: 'InpBEPips', defaultVal: '5000 Points ($5.00)', desc: 'ระยะกำไรเริ่มย้าย SL เลื่อนมาล็อกทุน Breakeven (+10 Points)' },
   { group: '== Breakeven & Trailing Stop ==', param: 'InpTrailLevel1Pips', defaultVal: '10000 Points ($10.00)', desc: 'ระยะกำไรเริ่มเปิดใช้งาน Trailing Stop' },
   { group: '== Breakeven & Trailing Stop ==', param: 'InpTrailLevel1LockPips', defaultVal: '5000 Points ($5.00)', desc: 'ระยะล็อกกำไรขั้นต่ำของ Trailing Stop' },
@@ -185,7 +193,7 @@ export default function WebhookGuide({ serverStatus }) {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
           <Construction sx={{ color: '#6366f1', fontSize: 24 }} />
           <Typography variant="h6" sx={{ fontWeight: 700, flexGrow: 1 }}>คู่มือการติดตั้ง & ตั้งค่า EA ใน MT5</Typography>
-          <Chip label="โหมดการทำงาน: MT5 Polling (v2.1)" size="small" sx={{ bgcolor: 'rgba(99,102,241,0.12)', color: '#818cf8', fontWeight: 700 }} />
+          <Chip label="โหมดการทำงาน: MT5 Polling (v2.2)" size="small" sx={{ bgcolor: 'rgba(99,102,241,0.12)', color: '#818cf8', fontWeight: 700 }} />
           <Chip
             label={serverStatus ? '● Server Online' : '○ Server Offline'}
             size="small"
@@ -226,7 +234,7 @@ export default function WebhookGuide({ serverStatus }) {
       <Paper sx={{ p: 3, border: '1px solid rgba(255,255,255,0.06)', bgcolor: 'background.paper' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2.5 }}>
           <Description sx={{ color: '#10b981', fontSize: 24 }} />
-          <Typography variant="h6" sx={{ fontWeight: 700 }}>สรุปตรรกะการคำนวณและเทรดของ EA (Pure Structure v2.1)</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>สรุปตรรกะการคำนวณและเทรดของ EA (Pure Structure v2.2)</Typography>
         </Box>
 
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3 }}>

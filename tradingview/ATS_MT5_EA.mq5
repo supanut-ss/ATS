@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright   "Copyright 2026, Antigravity AI"
 #property link        "https://ats.info.com"
-#property version     "2.10"
-#property description "ATS MT5 EA v2.1 - Pure Structure with HTF, CHoCH and daily risk guards"
+#property version     "2.20"
+#property description "ATS MT5 EA v2.2 - Pure Structure with confirmed early exits"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -87,6 +87,16 @@ input group "== Loss Cooldown Filter =="
 input bool     InpUseLossCooldown      = true;                  // พักเปิดไม้ใหม่หลังปิดสถานะขาดทุน
 input int      InpLossCooldownMins     = 60;                    // ระยะเวลาพักหลังไม้แพ้ (นาที)
 
+input group "== Early Exit Management =="
+input bool     InpUseEarlyExit         = true;                  // ปิดสถานะก่อนถึง Hard SL เมื่อโครงสร้างเสีย
+input bool     InpExitOnOppositeCHoCH  = true;                  // ปิดเมื่อเกิด CHoCH ฝั่งตรงข้าม
+input bool     InpExitOnStructureBreak = true;                  // ปิดเมื่อแท่งปิดทะลุ Pivot ฝั่งป้องกัน
+input int      InpExitConfirmBars      = 2;                     // จำนวนแท่งปิดยืนยันสถานการณ์เสีย
+input bool     InpExitOnHTFReversal    = false;                 // ปิดเมื่อ H1/H4 ที่เปิดใช้กลับทิศพร้อมกัน
+input bool     InpUseTimeStop          = true;                  // ปิดไม้ไม่เดินและยังขาดทุนเมื่อถือเกินกำหนด
+input int      InpTimeStopBars         = 12;                    // จำนวนแท่งสูงสุดก่อน Time Stop
+input double   InpEarlyExitRiskR       = 0.70;                  // ขาดทุนถึงสัดส่วน R นี้ให้ข้ามเวลายืนยันเมื่อมีสัญญาณเสีย
+
 input group "== Breakeven & Scaled Trailing Stop =="
 input int      InpBEPips               = 5000;                  // ระยะกำไรที่เริ่มเปิดใช้งานล็อคทุน Breakeven (Points)
 input int      InpTrailLevel1Pips      = 10000;                 // ระยะกำไรที่เริ่มรัน Trailing Stop เลื่อนตามราคา (Points)
@@ -115,6 +125,7 @@ int    trend   = 0,   prev_trend = 0;
 double swing_high = 0.0, swing_low = 0.0;
 bool   touched_discount = false, touched_premium = false;
 bool   choch_bull = false, choch_bear = false;
+int    early_exit_buy_bad_bars = 0, early_exit_sell_bad_bars = 0;
 
 //--- FVG / OB zones
 double fvg_bull_low = 0.0, fvg_bull_high = 0.0;
@@ -702,6 +713,109 @@ void InitStateFromHistory()
 }
 
 //+------------------------------------------------------------------+
+//| Confirmed soft exit. Hard SL remains active at the broker.       |
+//+------------------------------------------------------------------+
+bool ManageEarlyExit(double closed_price,
+                     bool buy_bad_signal,
+                     bool sell_bad_signal,
+                     string buy_reason,
+                     string sell_reason)
+{
+   double position_size = GetPositionSize();
+   string risk_prefix = "ATS_ER_" + IntegerToString(InpMagic) + "_" + Symbol() + "_";
+   if(!InpUseEarlyExit || position_size == 0.0)
+   {
+      early_exit_buy_bad_bars = 0;
+      early_exit_sell_bad_bars = 0;
+      if(position_size == 0.0)
+      {
+         for(int i = GlobalVariablesTotal() - 1; i >= 0; i--)
+         {
+            string variable_name = GlobalVariableName(i);
+            if(StringFind(variable_name, risk_prefix) == 0)
+               GlobalVariableDel(variable_name);
+         }
+      }
+      return false;
+   }
+
+   if(position_size > 0.0)
+   {
+      early_exit_buy_bad_bars = buy_bad_signal ? early_exit_buy_bad_bars + 1 : 0;
+      early_exit_sell_bad_bars = 0;
+   }
+   else
+   {
+      early_exit_sell_bad_bars = sell_bad_signal ? early_exit_sell_bad_bars + 1 : 0;
+      early_exit_buy_bad_bars = 0;
+   }
+
+   bool closed_any = false;
+   int period_seconds = PeriodSeconds(Period());
+   if(period_seconds <= 0) period_seconds = 300;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      string symbol = PositionGetSymbol(i);
+      if(symbol != Symbol() || PositionGetInteger(POSITION_MAGIC) != InpMagic)
+         continue;
+
+      ulong ticket = (ulong)PositionGetInteger(POSITION_TICKET);
+      long position_type = PositionGetInteger(POSITION_TYPE);
+      double open_price = PositionGetDouble(POSITION_PRICE_OPEN);
+      double stop_price = PositionGetDouble(POSITION_SL);
+      double position_profit = PositionGetDouble(POSITION_PROFIT);
+      datetime opened_at = (datetime)PositionGetInteger(POSITION_TIME);
+
+      string risk_key = risk_prefix + IntegerToString(ticket);
+      double initial_risk = 0.0;
+      if(GlobalVariableCheck(risk_key))
+         initial_risk = GlobalVariableGet(risk_key);
+      else
+      {
+         initial_risk = MathAbs(open_price - stop_price);
+         if(initial_risk <= 0.0)
+            initial_risk = (InpUseFixedSL ? InpFixedSLPips : InpMaxSLPips)
+                           * SymbolInfoDouble(symbol, SYMBOL_POINT);
+         GlobalVariableSet(risk_key, initial_risk);
+      }
+
+      bool is_buy = position_type == POSITION_TYPE_BUY;
+      bool bad_signal = is_buy ? buy_bad_signal : sell_bad_signal;
+      int confirmed_bars = is_buy ? early_exit_buy_bad_bars : early_exit_sell_bad_bars;
+      double adverse_distance = is_buy ? open_price - closed_price : closed_price - open_price;
+      double adverse_r = initial_risk > 0.0 ? MathMax(0.0, adverse_distance) / initial_risk : 0.0;
+      int held_bars = (int)((TimeCurrent() - opened_at) / period_seconds);
+
+      bool confirmed_exit = bad_signal && confirmed_bars >= InpExitConfirmBars;
+      bool risk_emergency = bad_signal && adverse_r >= InpEarlyExitRiskR;
+      bool time_exit = InpUseTimeStop && held_bars >= InpTimeStopBars && position_profit <= 0.0;
+      if(!confirmed_exit && !risk_emergency && !time_exit)
+         continue;
+
+      string reason = time_exit ? "Time Stop" : (is_buy ? buy_reason : sell_reason);
+      Print("ATS EA: EARLY EXIT #", ticket, " ", is_buy ? "BUY" : "SELL",
+            " reason=", reason, " confirm=", confirmed_bars,
+            " adverseR=", DoubleToString(adverse_r, 2), " heldBars=", held_bars);
+
+      if(trade.PositionClose(ticket))
+      {
+         GlobalVariableDel(risk_key);
+         closed_any = true;
+      }
+      else
+         Print("ATS EA: Early exit failed #", ticket, " retcode=", trade.ResultRetcode());
+   }
+
+   if(closed_any)
+   {
+      early_exit_buy_bad_bars = 0;
+      early_exit_sell_bad_bars = 0;
+   }
+   return closed_any;
+}
+
+//+------------------------------------------------------------------+
 //| MAIN STRATEGY: Liquidity + CHoCH + BOS + FVG/OB + PA            |
 //+------------------------------------------------------------------+
 void ExecuteStrategyLogic()
@@ -836,6 +950,29 @@ void ExecuteStrategyLogic()
    if(!htf_data_ok)
       Print("ATS EA: Entry blocked because enabled HTF trend data is unavailable.");
 
+   bool buy_structure_break = last_pl > 0.0 && cc < last_pl;
+   bool sell_structure_break = last_ph > 0.0 && cc > last_ph;
+   bool htf_exit_enabled = InpExitOnHTFReversal && (InpUseH1Trend || InpUseH4Trend) && htf_data_ok;
+   bool buy_htf_reversal = htf_exit_enabled
+                           && (!InpUseH1Trend || h1r)
+                           && (!InpUseH4Trend || h4r);
+   bool sell_htf_reversal = htf_exit_enabled
+                            && (!InpUseH1Trend || h1b)
+                            && (!InpUseH4Trend || h4b);
+
+   bool buy_bad_signal = (InpExitOnOppositeCHoCH && choch_bear)
+                         || (InpExitOnStructureBreak && buy_structure_break)
+                         || buy_htf_reversal;
+   bool sell_bad_signal = (InpExitOnOppositeCHoCH && choch_bull)
+                          || (InpExitOnStructureBreak && sell_structure_break)
+                          || sell_htf_reversal;
+   string buy_exit_reason = (InpExitOnStructureBreak && buy_structure_break) ? "Structure Break"
+                            : (InpExitOnOppositeCHoCH && choch_bear) ? "Bearish CHoCH" : "H1/H4 Reversal";
+   string sell_exit_reason = (InpExitOnStructureBreak && sell_structure_break) ? "Structure Break"
+                             : (InpExitOnOppositeCHoCH && choch_bull) ? "Bullish CHoCH" : "H1/H4 Reversal";
+   bool early_exit_closed = ManageEarlyExit(cc, buy_bad_signal, sell_bad_signal,
+                                            buy_exit_reason, sell_exit_reason);
+
    // 10. Entry conditions (one trade at a time, frequent entries)
    bool no_pos = (GetPositionCount()==0);
    bool fvg_ob_bull = false;
@@ -920,8 +1057,8 @@ void ExecuteStrategyLogic()
      if(loss_cooldown_blocked)
         Print("ATS EA: Entry blocked by Loss Cooldown (", cooldown_remaining, " minutes remaining)");
 
-     bool longCond  = (trend==1)  && choch_long_ok  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
-     bool shortCond = (trend==-1) && choch_short_ok && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
+     bool longCond  = (trend==1)  && choch_long_ok  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !early_exit_closed && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
+     bool shortCond = (trend==-1) && choch_short_ok && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !early_exit_closed && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
 
    double pt        = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
    double tp_v      = InpTPPips * pt;
@@ -1078,6 +1215,13 @@ int OnInit()
       return(INIT_PARAMETERS_INCORRECT);
    }
 
+   if(InpUseEarlyExit && (InpExitConfirmBars < 1 || InpTimeStopBars < 1
+      || InpEarlyExitRiskR <= 0.0 || InpEarlyExitRiskR > 1.0))
+   {
+      Print("ATS EA ERROR: Early Exit settings require ConfirmBars/TimeStopBars >= 1 and RiskR in (0,1].");
+      return(INIT_PARAMETERS_INCORRECT);
+   }
+
    backend_url = InpBackendURL;
    if(StringSubstr(backend_url,StringLen(backend_url)-1,1)=="/")
       backend_url=StringSubstr(backend_url,0,StringLen(backend_url)-1);
@@ -1100,7 +1244,7 @@ int OnInit()
    InitStateFromHistory();
    InitTrackedPositions();
    EventSetMillisecondTimer(InpPollInterval);
-   Print("ATS EA v2.1 | Lot=",InpFixedLot," BE=",InpBEPips,"p Trail@",InpTrailLevel1Pips,"p->",InpTrailLevel1LockPips,"p TP=",InpTPPips,"p");
+   Print("ATS EA v2.2 | Lot=",InpFixedLot," BE=",InpBEPips,"p Trail@",InpTrailLevel1Pips,"p->",InpTrailLevel1LockPips,"p TP=",InpTPPips,"p");
    Print("ATS EA: Strategy = Liquidity + CHoCH + BOS + FVG/OB re-entry");
    return(INIT_SUCCEEDED);
 }

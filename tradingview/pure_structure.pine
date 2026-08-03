@@ -1,6 +1,6 @@
 //@version=6
 strategy(
-     title               = "Pure Structure v2.1 [Liquidity+CHoCH+BOS+FVG/OB]",
+     title               = "Pure Structure v2.2 [Liquidity+CHoCH+BOS+FVG/OB]",
      overlay             = true,
      initial_capital     = 100000,
      default_qty_type    = strategy.fixed,
@@ -67,6 +67,15 @@ use_stepped_trail  = input.bool(true, title="Use Stepped Trailing", group=grp_ex
               tooltip="เปิด = ขยับล็อกกำไรทีละขั้นตามราคา (แบบที่ 2) | ปิด = ล็อกกำไรคงที่ที่ระดับที่กำหนดเท่านั้น (แบบที่ 1)")
 tp_pips     = input.int(2000,  title="Hard TP (Points from entry)", group=grp_exit,
               tooltip="TP อัตโนมัติที่ $20.00 (2000 point) จากจุดเข้า (เช่น Entry 4000 -> TP 4020)")
+
+use_early_exit          = input.bool(true, title="Enable Confirmed Early Exit", group=grp_exit, tooltip="ปิดก่อน Hard SL เมื่อโครงสร้างหรือโมเมนตัมหลักเสีย")
+exit_on_opposite_choch  = input.bool(true, title="Exit on Opposite CHoCH", group=grp_exit)
+exit_on_structure_break = input.bool(true, title="Exit on Structure Break", group=grp_exit)
+exit_confirm_bars       = input.int(2, title="Early Exit Confirmation Bars", minval=1, group=grp_exit)
+exit_on_htf_reversal    = input.bool(false, title="Exit on Confirmed H1/H4 Reversal", group=grp_exit)
+use_time_stop           = input.bool(true, title="Enable Time Stop", group=grp_exit)
+time_stop_bars          = input.int(12, title="Time Stop Bars", minval=1, group=grp_exit)
+early_exit_risk_r       = input.float(0.70, title="Emergency Early Exit at R", minval=0.05, maxval=1.0, step=0.05, group=grp_exit, tooltip="เมื่อมีสัญญาณเสียและขาดทุนถึง R นี้ ให้ปิดโดยไม่รอครบแท่งยืนยัน")
 
 // --- Force Close Time ---
 use_force_close     = input.bool(true, title="Enable Force Close Time", group=grp_exit, tooltip="บังคับปิดไม้ทั้งหมดที่เปิดอยู่เมื่อถึงเวลาที่กำหนด")
@@ -699,6 +708,8 @@ var float  t_tp_long     = na
 var float  t_entry_short = na
 var float  t_sl_short    = na
 var float  t_tp_short    = na
+var float  t_initial_risk_long  = na
+var float  t_initial_risk_short = na
 var string sid_long      = na
 var string sid_short     = na
 
@@ -744,6 +755,7 @@ if longCondition
         t_entry_long     := close
         t_sl_long        := sl_price
         t_tp_long        := tp_price
+        t_initial_risk_long := risk
         s                = str.tostring(time) + "_BUY"
         sid_long         := s
         is_entering_long := true
@@ -763,6 +775,7 @@ if shortCondition
         t_entry_short     := close
         t_sl_short        := sl_price
         t_tp_short        := tp_price
+        t_initial_risk_short := risk
         s                 = str.tostring(time) + "_SELL"
         sid_short         := s
         is_entering_short := true
@@ -815,6 +828,54 @@ if strategy.position_size < 0
     t_sl_short := new_sl
 
 // ==========================================
+// Confirmed Early Exit (Hard SL remains active)
+// ==========================================
+buy_structure_break  = not na(last_pl) and close < last_pl
+sell_structure_break = not na(last_ph) and close > last_ph
+htf_exit_enabled     = exit_on_htf_reversal and (use_h1_trend or use_h4_trend) and htf_data_ok
+buy_htf_reversal     = htf_exit_enabled and (not use_h1_trend or h1_bear) and (not use_h4_trend or h4_bear)
+sell_htf_reversal    = htf_exit_enabled and (not use_h1_trend or h1_bull) and (not use_h4_trend or h4_bull)
+
+buy_bad_signal  = (exit_on_opposite_choch and choch_bear) or (exit_on_structure_break and buy_structure_break) or buy_htf_reversal
+sell_bad_signal = (exit_on_opposite_choch and choch_bull) or (exit_on_structure_break and sell_structure_break) or sell_htf_reversal
+
+var int early_buy_bad_bars  = 0
+var int early_sell_bad_bars = 0
+
+// calc_on_every_tick=true, therefore counters advance only once on a confirmed bar.
+if barstate.isconfirmed
+    if strategy.position_size > 0
+        early_buy_bad_bars  := buy_bad_signal ? early_buy_bad_bars + 1 : 0
+        early_sell_bad_bars := 0
+    else if strategy.position_size < 0
+        early_sell_bad_bars := sell_bad_signal ? early_sell_bad_bars + 1 : 0
+        early_buy_bad_bars  := 0
+    else
+        early_buy_bad_bars  := 0
+        early_sell_bad_bars := 0
+
+held_bars = strategy.opentrades > 0 ? bar_index - strategy.opentrades.entry_bar_index(0) : 0
+long_adverse_r  = strategy.position_size > 0 and not na(t_initial_risk_long) and t_initial_risk_long > 0 ? math.max(0.0, strategy.position_avg_price - close) / t_initial_risk_long : 0.0
+short_adverse_r = strategy.position_size < 0 and not na(t_initial_risk_short) and t_initial_risk_short > 0 ? math.max(0.0, close - strategy.position_avg_price) / t_initial_risk_short : 0.0
+
+long_confirmed_exit  = barstate.isconfirmed and buy_bad_signal and early_buy_bad_bars >= exit_confirm_bars
+short_confirmed_exit = barstate.isconfirmed and sell_bad_signal and early_sell_bad_bars >= exit_confirm_bars
+long_risk_exit       = barstate.isconfirmed and buy_bad_signal and long_adverse_r >= early_exit_risk_r
+short_risk_exit      = barstate.isconfirmed and sell_bad_signal and short_adverse_r >= early_exit_risk_r
+long_time_exit       = barstate.isconfirmed and use_time_stop and held_bars >= time_stop_bars and strategy.position_size > 0 and close <= strategy.position_avg_price
+short_time_exit      = barstate.isconfirmed and use_time_stop and held_bars >= time_stop_bars and strategy.position_size < 0 and close >= strategy.position_avg_price
+
+if use_early_exit and strategy.position_size > 0 and (long_confirmed_exit or long_risk_exit or long_time_exit)
+    long_exit_reason = long_time_exit ? "Time Stop" : (exit_on_structure_break and buy_structure_break) ? "Structure Break" : (exit_on_opposite_choch and choch_bear) ? "Bearish CHoCH" : "H1/H4 Reversal"
+    strategy.close("Buy", comment="Early Exit: " + long_exit_reason)
+    label.new(bar_index, high, "EARLY EXIT BUY\n" + long_exit_reason, color=color.new(color.orange, 10), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+if use_early_exit and strategy.position_size < 0 and (short_confirmed_exit or short_risk_exit or short_time_exit)
+    short_exit_reason = short_time_exit ? "Time Stop" : (exit_on_structure_break and sell_structure_break) ? "Structure Break" : (exit_on_opposite_choch and choch_bull) ? "Bullish CHoCH" : "H1/H4 Reversal"
+    strategy.close("Sell", comment="Early Exit: " + short_exit_reason)
+    label.new(bar_index, low, "EARLY EXIT SELL\n" + short_exit_reason, color=color.new(color.orange, 10), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+// ==========================================
 // Exits (Hard TP at 1500pip + dynamic SL)
 // ==========================================
 if strategy.position_size > 0 and not na(t_sl_long) and not na(t_tp_long)
@@ -831,12 +892,14 @@ if pos_closed_long and not is_entering_long
     t_entry_long  := na
     t_sl_long     := na
     t_tp_long     := na
+    t_initial_risk_long := na
     sid_long      := na
 
 if pos_closed_short and not is_entering_short
     t_entry_short := na
     t_sl_short    := na
     t_tp_short    := na
+    t_initial_risk_short := na
     sid_short     := na
 
 // ==========================================

@@ -141,7 +141,7 @@ Actions: `BUY` | `SELL` | `CLOSE` | `CLOSE_ALL` | `MODIFY`
 
 ดูไฟล์ `tradingview/ATS_MT5_EA.mq5` สำหรับสคริปต์ Expert Advisor ฉบับเต็ม
 
-**Pure Structure v2.1 + Anti Fake-PA Logic:**
+**Pure Structure v2.2 + Anti Fake-PA Logic:**
 1. **Pivot High/Low & BOS/CHoCH** — ตรวจจับโครงสร้างการทำลายราคา (BOS/CHoCH) ย้อนหลัง 5 แท่งเทียน
 2. **FVG & Order Block Zones** — วางกรอบโซน Fair Value Gap และ Order Block บน M5
 3. **Premium / Discount Area** — กรองจุดซื้อขายด้วย Fibonacci 0.618 (BUY ที่ Discount / SELL ที่ Premium)
@@ -149,6 +149,7 @@ Actions: `BUY` | `SELL` | `CLOSE` | `CLOSE_ALL` | `MODIFY`
 5. **Multi-Timeframe & Sideway Filters** — M5 EMA 200 + H1/H4 EMA 21, ADX >= 20, Choppiness Index <= 60, ATR Volatility Ratio >= 0.80, News & Volume Spike Filter
 6. **Breakeven & Stepped Trailing Stop** — BE ที่ $5.00 (5,000 pts), Trailing Stop ที่ $10.00 (10,000 pts), Hard TP ที่ $20.00 (20,000 pts)
 7. **Risk Guards** — Require directional CHoCH, Daily Loss Guard สูงสุด 4 ไม้แพ้/วัน และพัก 60 นาทีหลังไม้แพ้
+8. **Confirmed Early Exit** — ปิดก่อน Hard SL เมื่อเกิด Opposite CHoCH/Structure Break ยืนยัน 2 แท่ง, ขาดทุนถึง 0.70R ขณะมีสัญญาณเสีย หรือถือไม่เดินเกิน 12 แท่ง
 
 ---
 
