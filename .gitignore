@@ -73,11 +73,32 @@ out/
 
 # dotenv environment variables files
 .env
+.env.*
+!.env.example
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 .env*.local
+
+# Application configuration containing credentials or machine-specific values
+**/appsettings.json
+**/appsettings.Local.json
+**/appsettings.Production.json
+**/appsettings.*.local.json
+!**/appsettings.example.json
+**/secrets.json
+**/credentials.json
+
+# Local runtime databases and migrated snapshots
+**/signals_db.json
+**/signals_db.*.json
+**/*.migrated
+
+# Local deployment overrides and MT5 presets
+deploy.local.ps1
+upload-ftp.local.ps1
+tradingview/*.set
 
 # vercel
 .vercel
@@ -108,6 +129,9 @@ out/
 # IDEs and editors
 .idea/
 *.suo
+*.user
+*.rsuser
+*.sln.docstates
 *.ntvs*
 *.njsproj
 *.sln

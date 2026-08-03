@@ -77,6 +77,10 @@ npm run dev
 
 เปิด browser ที่ `http://localhost:5173`
 
+สำหรับ C# Backend ให้คัดลอก `backend/appsettings.example.json` เป็น
+`backend/appsettings.json` แล้วกรอก Database, Webhook Secret และ MT5 account
+ของเครื่องนั้น ไฟล์จริงถูก `.gitignore` และต้องไม่ commit ขึ้น repository
+
 ### 5. ตั้งค่า TradingView Pine Script
 
 1. เปิด TradingView → Chart XAUUSD
