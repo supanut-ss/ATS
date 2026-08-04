@@ -1,0 +1,945 @@
+//@version=6
+strategy(
+     title               = "Pure Structure v2.3 [VSA + XAUUSD M5 Tuned]",
+     overlay             = true,
+     initial_capital     = 100000,
+     default_qty_type    = strategy.fixed,
+     default_qty_value   = 0.01,
+     margin_long         = 0,
+     margin_short        = 0,
+     commission_type     = strategy.commission.cash_per_contract,
+     commission_value    = 0.055,
+     slippage            = 2,
+     max_lines_count     = 500,
+     calc_on_every_tick  = true
+ )
+
+// ==========================================
+// 1. Inputs
+// ==========================================
+pivot_length  = input.int(5,  title="Pivot Lookback Length", minval=1)
+sl_buffer     = input.float(1.0, title="SL Buffer (Points)", minval=0.0, tooltip="Converted to price with syminfo.mintick, matching MT5 SYMBOL_POINT")
+max_sl_pips   = input.int(1200,  title="Max Structural SL (Pips/Points)")
+pd_threshold  = input.float(0.618, title="Premium/Discount Fib Threshold", minval=0.1, maxval=0.75, step=0.05)
+
+grp_entry    = "== Entry Logic =="
+entry_mode   = input.string("Discount/Premium Only (Original 54% WR)", title="Entry Zone Mode", options=["Discount/Premium Only (Original 54% WR)", "Any FVG/OB (High Frequency)", "FVG/OB Inside Discount/Premium (Strict ICT)"], group=grp_entry)
+require_choch = input.bool(false, title="Require Directional CHoCH", group=grp_entry, tooltip="OFF = เข้าไม้ได้ทันทีเมื่อ BOS ยืนยัน trend ไม่ต้องรอ CHoCH | ON = ต้องมี CHoCH ก่อน BOS (ลด frequency แต่แม่นขึ้น)")
+use_zone_filter = input.bool(true, title="Enable Zone Filter", group=grp_entry, tooltip="ปิด = ไม่ต้องรอ pullback ถึง Discount/Premium zone เข้าไม้ทันที่ trend + PA ตรง (เพิ่ม frequency มาก) | ใช้เพื่อ diagnose หาจุด block)")
+
+// --- Fixed Scalping SL ---
+grp_scalp    = "== Scalping Risk =="
+use_fixed_sl = input.bool(true, title="Use Fixed SL instead of Structure", group=grp_scalp, tooltip="ใช้ SL คงที่สำหรับสายสั้น แทนการอิง Swing Low/High")
+fixed_sl_pips= input.int(700, title="Fixed SL (Points/Pips)", group=grp_scalp, tooltip="700 point = $7.00 ระยะตัดขาดทุนจากจุดเข้า (เช่น Entry 4000 -> SL 3993) | XAUUSD M5 มี noise ~$3-5 ต้อง SL กว้างพอไม่โดน spike wick")
+
+// --- Daily Risk Management ---
+grp_daily_risk         = "== Daily Loss Guard =="
+use_max_daily_losses   = input.bool(true, title="Enable Daily Loss Guard", group=grp_daily_risk, tooltip="Block new entries after the configured number of losing positions")
+max_daily_loss_count   = input.int(3, title="Max Daily Losses", minval=1, group=grp_daily_risk)
+daily_loss_timezone    = input.string("Asia/Bangkok", title="Daily Reset Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_daily_risk)
+
+// --- M5 Anti Fake-PA ---
+grp_pa       = "== M5 Anti Fake-PA =="
+pa_body_min  = input.float(0.35, title="Min Body Ratio (0.0–1.0)",   minval=0.1, maxval=0.9, step=0.05, group=grp_pa, tooltip="body ของแท่ง PA ต้องใหญ่กว่า X% ของ range | 0.35=35% ค่าเดิม XAUUSD M5 สมดุลระหว่าง frequency กับ quality")
+pa_wick_max  = input.float(0.60, title="Max Wick Ratio (0.0–1.0)",   minval=0.0, maxval=0.9, step=0.05, group=grp_pa, tooltip="wick ด้านที่สวนทางต้องไม่เกิน X% | 0.60=60% ค่าเดิม ป้องกัน rejection แต่ไม่เข้มเกิน")
+pa_close_min = input.float(0.45, title="Min Close Position (0.0–1.0)",minval=0.1, maxval=0.9, step=0.05, group=grp_pa, tooltip="close ต้องอยู่ในช่วงบน/ล่าง X% ของ range | 0.45=45% ค่าเดิม เพิ่ม frequency แต่ยังกรอง doji")
+pa_engulf    = input.bool(true, title="Require Engulfing Close",                              group=grp_pa, tooltip="bullish: close ต้องปิดเหนือ open[1] | เปิด = เข้มสุดบน M5")
+bos_max_bars   = input.int(3,    title="Pending BOS Expiry (Bars)",   minval=1, maxval=10,  group=grp_pa, tooltip="Pending BOS จะถูกยกเลิกอัตโนมัติถ้าไม่ยืนยันภายใน N bar")
+
+// --- Debug ---
+grp_debug      = "== Debug =="
+show_debug     = input.bool(true,  title="Show Debug Table",    group=grp_debug, tooltip="ตาราง real-time มุมขวาบน")
+test_mode      = input.bool(false, title="[TEST] Bypass All Filters", group=grp_debug, tooltip="เปิด = เข้าไม้ทันทีที่ trend==1/-1 โดยไม่ต้องมี PA/Zone/EMA/CHoCH | ใช้วินิจฉัยว่า BOS/trend ทำงานหรือเปล่า")
+show_bar_debug = input.bool(false, title="[TEST] Show Bar Labels",  group=grp_debug, tooltip="แสดง label ทุก bar ว่า trend เป็นอะไร + PA ตรงไหม (เปิดให้ zoom เข้าไปดูบนกราฟ)")
+
+// --- Position Sizing ---
+grp_risk  = "== Position Sizing =="
+fixed_lot = input.float(5.0, title="Fixed Lot (0.05)", minval=0.01, step=0.01, group=grp_risk)
+
+// --- Scaled TP/BE/Trail ---
+grp_exit    = "== Exit Management =="
+be_pips     = input.int(800,   title="Breakeven at (Points) — Normal Vol", group=grp_exit, tooltip="Volume ปกติ/สูง: กันหน้าทุนที่ $8.00 (800 pt) | ตลาดวิ่งแรงปล่อยวิ่ง")
+be_pips_low_vol = input.int(500, title="Breakeven at (Points) — Low Vol", group=grp_exit, tooltip="Volume ต่ำ: กันหน้าทุนเร็วขึ้นที่ $5.00 (500 pt) | ตลาดเงียบไม่วิ่งแรง ต้องกันทุนเร็ว")
+use_adaptive_be = input.bool(true, title="Enable Adaptive BE (Volume-Based)", group=grp_exit, tooltip="เปิด = ปรับ BE ตาม Volume ตอนเข้าไม้ | Volume ต่ำ กันทุนเร็ว 500pt | Volume ปกติ ปล่อยวิ่ง 800pt")
+trail1_pips = input.int(1500,  title="Trail Level1 trigger (Points)", group=grp_exit, tooltip="เมื่อกำไรถึง $15.00 (1500 point) ให้เริ่ม Trailing SL | สัดส่วน ~2R ของ SL 700")
+lock1_pips  = input.int(700,   title="Trail Level1 lock offset (Points)", group=grp_exit, tooltip="ล็อกกำไรขั้นต่ำ $7.00 (700 point) ทั้ง low vol และ normal vol | คงที่เพื่อไม่โดนเขย่าออก")
+use_stepped_trail  = input.bool(true, title="Use Stepped Trailing", group=grp_exit, tooltip="เปิด = ขยับล็อกกำไรทีละขั้นตามราคา (แบบที่ 2) | ปิด = ล็อกกำไรคงที่ที่ระดับที่กำหนดเท่านั้น (แบบที่ 1)")
+tp_pips     = input.int(4000,  title="Hard TP (Points from entry)", group=grp_exit, tooltip="TP อัตโนมัติที่ $40.00 (4000 point) จากจุดเข้า (เช่น Entry 4000 -> TP 4040) | R:R ~5.7:1")
+
+use_early_exit          = input.bool(true, title="Enable Confirmed Early Exit", group=grp_exit, tooltip="ปิดก่อน Hard SL เมื่อโครงสร้างหรือโมเมนตัมหลักเสีย")
+exit_on_opposite_choch  = input.bool(true, title="Exit on Opposite CHoCH", group=grp_exit)
+exit_on_structure_break = input.bool(true, title="Exit on Structure Break", group=grp_exit)
+exit_confirm_bars       = input.int(2, title="Early Exit Confirmation Bars", minval=1, group=grp_exit)
+exit_on_htf_reversal    = input.bool(false, title="Exit on Confirmed H1/H4 Reversal", group=grp_exit)
+use_time_stop           = input.bool(true, title="Enable Time Stop", group=grp_exit)
+time_stop_bars          = input.int(20, title="Time Stop Bars", minval=1, group=grp_exit, tooltip="20 bars = 100 นาที บน M5 | TP4000 ต้องให้เวลามากกว่า TP2000")
+early_exit_risk_r       = input.float(0.65, title="Emergency Early Exit at R", minval=0.05, maxval=1.0, step=0.05, group=grp_exit, tooltip="เมื่อมีสัญญาณเสียและขาดทุนถึง 0.65R ให้ปิดโดยไม่รอครบแท่งยืนยัน | SL700 * 0.65 = $4.55")
+
+// --- Force Close Time ---
+use_force_close     = input.bool(true, title="Enable Force Close Time", group=grp_exit, tooltip="บังคับปิดไม้ทั้งหมดที่เปิดอยู่เมื่อถึงเวลาที่กำหนด")
+force_close_session = input.session("0400-0405:23456", title="Force Close Session", group=grp_exit, tooltip="เวลาที่จะบังคับปิดไม้ทั้งหมด (รูปแบบ hhmm-hhmm:days โดย 2-6 คือ จันทร์-ศุกร์, คั่นด้วยลูกน้ำได้)")
+force_close_tz      = input.string("Asia/Bangkok", title="Force Close Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_exit)
+
+// --- Trend Filters ---
+grp_trend            = "== Trend Filters =="
+use_ema              = input.bool(true, title="EMA 200 Filter",              group=grp_trend, tooltip="เปิด default — H1+H4 EMA กรองทิศทางอยู่แล้ว | EMA200 M5 ขยับช้า ประอัพต่อ scalping")
+ema_length           = input.int(200,    title="EMA Length",                 group=grp_trend)
+ema_buffer_pips      = input.int(80,     title="EMA Buffer (pips tolerance)",group=grp_trend, tooltip="ถ้าเปิด EMA200 filter ให้เพิ่ม buffer นี้เพื่อไม่ให้ EMA block เมื่อราคาอยู่ใกล้ EMA มาก (80 pip = $0.80 XAUUSD) | กว้างขึ้นลด over-filter ใกล้ EMA")
+use_h1_trend         = input.bool(true,  title="H1 EMA Filter",              group=grp_trend)
+h1_ema_len           = input.int(21,     title="H1 EMA Length",              minval=5, group=grp_trend)
+use_h4_trend         = input.bool(true,  title="H4 EMA Filter",              group=grp_trend)
+h4_ema_len           = input.int(21,     title="H4 EMA Length",              minval=5, group=grp_trend)
+filter_counter_trend = input.bool(false, title="Block Counter-Trend trades", group=grp_trend)
+
+// --- VSA & Volume Filters ---
+grp_vsa                = "== VSA & Volume Logic =="
+use_vsa_filter         = input.bool(true,  title="Enable VSA & Volume Rules", group=grp_vsa, tooltip="เปิดใช้งานกฎ VSA:\n1. Volume สูง + แท่งใหญ่ผิดปกติ -> ห้ามเข้า\n2. Volume สูง + Spread สูง -> ห้ามเข้า\n3. Volume สูง + ไม่ใหญ่ + ปิดแข็งแรงตามเทรนด์ -> อนุญาต\n4. หลัง Spike พัก 1-2 แท่งก่อนหา Pullback entry")
+vol_spike_mult         = input.float(2.2,  title="High Volume Multiplier", minval=1.1, step=0.1, group=grp_vsa, tooltip="จำนวนเท่าของ Volume SMA ที่ถือว่าเป็น Volume สูง | XAUUSD Tick Volume มี noise สูง ใช้ 2.2x กรอง false spike")
+vol_sma_len            = input.int(20,     title="Volume SMA Length", minval=5, group=grp_vsa)
+large_candle_mult      = input.float(2.0,  title="Large Candle Body/Range Multiplier (vs ATR)", minval=1.0, step=0.1, group=grp_vsa, tooltip="ขนาด Body/Range ที่ใหญ่กว่า ATR(14) * N ถือว่าเป็นแท่งใหญ่ผิดปกติ | XAUUSD M5 แท่ง $10+ ถึงจะเป็น climax จริง")
+high_spread_mult       = input.float(2.0,  title="High Spread Multiplier (vs ATR)", minval=1.0, step=0.1, group=grp_vsa, tooltip="Spread (High-Low) ที่กว้างกว่า ATR(14) * N ถือว่า Spread สูงผิดปกติ | XAUUSD M5 ATR ปกติ ~$3-5 ต้อง 2x ถึง block")
+vsa_min_close_pos      = input.float(0.65, title="Strong Close Position Ratio (0.5-0.9)", minval=0.5, maxval=0.9, step=0.05, group=grp_vsa, tooltip="ระดับราคาปิดตามแนวโน้ม (bullish: (close-low)/range >= N, bearish: (high-close)/range >= N)")
+spike_cooldown_bars    = input.int(1,      title="Post-Spike Cooldown Bars", minval=1, maxval=5, group=grp_vsa, tooltip="พัก 1 แท่ง (5 นาที) หลัง Spike แล้วหา entry ใหม่ได้ทันที | ลดจาก 2 เพื่อเพิ่ม frequency")
+require_pullback_zone  = input.bool(false, title="Require Pullback Zone After Cooldown", group=grp_vsa, tooltip="ปิด = หลัง cooldown ครบแล้วเข้าไม้ได้ทันทีไม่ต้องรอ pullback zone | เปิด = ต้อง pullback เข้า FVG/OB/PD ก่อนถึงเปิดไม้ใหม่ (เข้ม ลด frequency)")
+
+// Legacy News Filter
+grp_news               = "== News Filter =="
+use_news_filter        = input.bool(true, title="Enable News Filter", group=grp_news, tooltip="งดเข้าไม้ในช่วงเวลาที่มีข่าวสำคัญ")
+news_session           = input.session("0300-0500:23456", title="News Block Session (UTC)", group=grp_news, tooltip="เวลาที่จะงดเข้าเทรด (รูปแบบ hhmm-hhmm:days)")
+news_timezone          = input.string("Asia/Bangkok", title="News Timezone", options=["UTC", "America/New_York", "Asia/Bangkok", "Exchange"], group=grp_news)
+
+// --- Sideway & Range Filters ---
+grp_sideway        = "== Sideway & Range Filters =="
+use_adx_filter     = input.bool(true,  title="Enable ADX Trend Filter",       group=grp_sideway, tooltip="กรองช่วงตลาด Sideway ไร้ทิศทาง (ADX < Threshold จะงดเข้าไม้เพื่อลด False Breakout & Whipsaw)")
+adx_len            = input.int(14,     title="ADX Lookback Length",           minval=5, group=grp_sideway)
+adx_min_threshold  = input.float(18.0, title="Min ADX Threshold",            minval=10.0, maxval=40.0, step=1.0, group=grp_sideway, tooltip="ถ้า ADX น้อยกว่าค่านี้ แสดงว่าตลาดเป็น Sideway | XAUUSD M5 มี ADX ต่ำ ~18-22 ช่วง Asian session ลดลงเล็กน้อยเพื่อไม่ over-filter")
+
+use_chop_filter    = input.bool(true, title="Enable Choppiness Index Filter", group=grp_sideway, tooltip="กรองช่วงตลาดแกว่งตัวไร้ทิศทาง (CHOP > Threshold จะงดเข้าเทรด)")
+chop_len           = input.int(14,     title="Choppiness Length",            minval=5, group=grp_sideway)
+chop_max_threshold = input.float(62.0, title="Max CHOP Threshold (0-100)",     minval=40.0, maxval=80.0, step=1.0, group=grp_sideway, tooltip="ค่า CHOP ยิ่งสูง (>55-60) แสดงว่าราคาแกว่งตัวผันผวนไร้เทรนด์ | XAUUSD M5 ผ่อนเป็น 62 ไม่ over-block ช่วง consolidation สั้น")
+
+use_atr_filter     = input.bool(true, title="Enable ATR Volatility Squeeze Filter", group=grp_sideway, tooltip="งดเทรดช่วงสภาวะราคาซบเซา Volatility ต่ำผิดปกติ")
+atr_min_ratio      = input.float(0.75, title="Min ATR Ratio vs SMA(50)",      minval=0.5, maxval=1.5, step=0.05, group=grp_sideway, tooltip="ATR(14) ต้องไม่ต่ำกว่า X% ของ ATR SMA(50) | XAUUSD M5 ลดเป็น 0.75 ให้เข้าไม้ได้ช่วง vol ตกเล็กน้อยหลัง London open")
+
+// --- Loss Cooldown Filter ---
+grp_cooldown        = "== Loss Cooldown Filter =="
+use_loss_cooldown   = input.bool(true, title="Enable Cooldown After Loss", group=grp_cooldown, tooltip="พักเปิดไม้ใหม่หลังจากปิดสถานะขาดทุน")
+loss_cooldown_mins  = input.int(45, title="Cooldown Duration (Minutes)", minval=1, group=grp_cooldown, tooltip="45 นาที XAUUSD M5 = 9 แท่ง พอให้โครงสร้างตลาดเปลี่ยนและลดอาการ revenge trade")
+
+// -- Webhook --
+grp_wh        = "== Webhook =="
+webhook_token = input.string("ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f", "Auth Token", group=grp_wh)
+
+// ==========================================
+// Helpers
+// ==========================================
+f_n(v) => str.tostring(math.round(v, 2))
+
+f_open(act, ent, sl, tp, sid, vol, be, t1, t1l, tpp) =>
+    '{"token":"' + webhook_token + '","action":"' + act + '","symbol":"XAUUSD","signal_id":"' + sid + '","entry":' + f_n(ent) + ',"sl":' + f_n(sl) + ',"tp":' + f_n(tp) + ',"volume":' + f_n(vol) + ',"be_pips":' + str.tostring(be) + ',"trail1_pips":' + str.tostring(t1) + ',"lock1_pips":' + str.tostring(t1l) + ',"tp_pips":' + str.tostring(tpp) + ',"tf":"' + timeframe.period + '","t":' + str.tostring(time) + '}'
+
+f_close(sid, ent, ext, pnl, res) =>
+    '{"token":"' + webhook_token + '","action":"CLOSE","symbol":"XAUUSD","signal_id":"' + sid + '","entry":' + f_n(ent) + ',"exit":' + f_n(ext) + ',"pnl":' + str.tostring(pnl) + ',"result":"' + res + '","t":' + str.tostring(time) + '}'
+
+// ==========================================
+// EMA & Multi-Timeframe Trend
+// ==========================================
+ema_line = ta.ema(close, ema_length)
+plot(use_ema ? ema_line : na, color=color.white, linewidth=2, title="EMA Filter")
+
+h1_ema   = request.security(syminfo.tickerid, "60",  ta.ema(close, h1_ema_len)[1], barmerge.gaps_off, barmerge.lookahead_off)
+h1_close = request.security(syminfo.tickerid, "60",  close[1],                      barmerge.gaps_off, barmerge.lookahead_off)
+h4_ema   = request.security(syminfo.tickerid, "240", ta.ema(close, h4_ema_len)[1], barmerge.gaps_off, barmerge.lookahead_off)
+h4_close = request.security(syminfo.tickerid, "240", close[1],                      barmerge.gaps_off, barmerge.lookahead_off)
+
+h1_bull = h1_close > h1_ema
+h1_bear = h1_close < h1_ema
+h4_bull = h4_close > h4_ema
+h4_bear = h4_close < h4_ema
+
+h1_data_ok = not na(h1_close) and not na(h1_ema)
+h4_data_ok = not na(h4_close) and not na(h4_ema)
+htf_data_ok = (not use_h1_trend or h1_data_ok) and (not use_h4_trend or h4_data_ok)
+
+htf_long_ok = htf_data_ok and (not use_h1_trend or h1_bull) and (not use_h4_trend or h4_bull)
+htf_short_ok = htf_data_ok and (not use_h1_trend or h1_bear) and (not use_h4_trend or h4_bear)
+is_counter_long  = (use_h1_trend and h1_bear) or (use_h4_trend and h4_bear)
+is_counter_short = (use_h1_trend and h1_bull) or (use_h4_trend and h4_bull)
+
+// ==========================================
+// Market Structure (Pivot High/Low + ZigZag)
+// ==========================================
+ph = ta.pivothigh(high, pivot_length, pivot_length)
+pl = ta.pivotlow(low,   pivot_length, pivot_length)
+
+var float  last_ph        = na
+var float  last_pl        = na
+var float  prev_ph        = na
+var float  prev_pl        = na
+var int    last_ph_bar    = na
+var int    last_pl_bar    = na
+var int    last_pivot_bar   = na
+var float  last_pivot_price = na
+var string last_pivot_type  = na
+var line   zigzag_line      = na
+var int    trend            = 0
+
+// Directional CHoCH confirmation remains valid for the active trend regime.
+var bool choch_bull = false
+var bool choch_bear = false
+
+// Pending BOS flags — ต้องยืนยัน 2 bar จึงเปลี่ยน trend + expiry counter (M5)
+var bool pending_bos_bull  = false
+var bool pending_bos_bear  = false
+var int  bos_bull_bar      = 0     // bar_index ที่เริ่ม pending bull
+var int  bos_bear_bar      = 0     // bar_index ที่เริ่ม pending bear
+
+if not na(ph)
+    prev_ph     := last_ph
+    last_ph     := ph
+    last_ph_bar := bar_index - pivot_length
+    // CHoCH Bear: new PH < prev PH in uptrend (trend change signal)
+    if trend == 1 and not na(prev_ph) and last_ph < prev_ph
+        choch_bear := true
+        label.new(last_ph_bar, ph, "CHoCH", color=color.new(color.red,20), textcolor=color.white, size=size.small, style=label.style_label_down)
+    if last_pivot_type == "L"
+        zigzag_line     := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_ph_bar, y2=ph, color=color.new(color.orange,20), width=2)
+        last_pivot_bar  := last_ph_bar
+        last_pivot_price := ph
+        last_pivot_type := "H"
+    else if last_pivot_type == "H"
+        if ph > last_pivot_price
+            line.set_x2(zigzag_line, last_ph_bar)
+            line.set_y2(zigzag_line, ph)
+            last_pivot_bar  := last_ph_bar
+            last_pivot_price := ph
+    else
+        last_pivot_bar  := last_ph_bar
+        last_pivot_price := ph
+        last_pivot_type := "H"
+
+if not na(pl)
+    prev_pl     := last_pl
+    last_pl     := pl
+    last_pl_bar := bar_index - pivot_length
+    // CHoCH Bull: new PL > prev PL in downtrend (trend change signal)
+    if trend == -1 and not na(prev_pl) and last_pl > prev_pl
+        choch_bull := true
+        label.new(last_pl_bar, pl, "CHoCH", color=color.new(color.green,20), textcolor=color.white, size=size.small, style=label.style_label_up)
+    if last_pivot_type == "H"
+        zigzag_line     := line.new(x1=last_pivot_bar, y1=last_pivot_price, x2=last_pl_bar, y2=pl, color=color.new(color.teal,20), width=2)
+        last_pivot_bar  := last_pl_bar
+        last_pivot_price := pl
+        last_pivot_type := "L"
+    else if last_pivot_type == "L"
+        if pl < last_pivot_price
+            line.set_x2(zigzag_line, last_pl_bar)
+            line.set_y2(zigzag_line, pl)
+            last_pivot_bar  := last_pl_bar
+            last_pivot_price := pl
+    else
+        last_pivot_bar  := last_pl_bar
+        last_pivot_price := pl
+        last_pivot_type := "L"
+
+// ==========================================
+// BOS (Break of Structure) — ต้องยืนยัน 2 แท่งติดต่อกัน
+// ==========================================
+if trend <= 0 and close > last_ph and not pending_bos_bull
+    pending_bos_bull := true
+    bos_bull_bar     := bar_index
+    pending_bos_bear := false
+
+if trend >= 0 and close < last_pl and not pending_bos_bear
+    pending_bos_bear := true
+    bos_bear_bar     := bar_index
+    pending_bos_bull := false
+
+// Expiry: ยกเลิก pending BOS ถ้าเกิน bos_max_bars bar แล้วยังไม่ยืนยัน
+if pending_bos_bull and (bar_index - bos_bull_bar) >= bos_max_bars
+    pending_bos_bull := false  // หมดอายุ — False BOS
+
+if pending_bos_bear and (bar_index - bos_bear_bar) >= bos_max_bars
+    pending_bos_bear := false  // หมดอายุ — False BOS
+
+// แท่งที่สอง (หรือมากกว่า): ยืนยัน BOS จริง
+if pending_bos_bull and close > last_ph
+    trend            := 1
+    choch_bear       := false
+    pending_bos_bull := false
+    label.new(bar_index, high, "BOS▲", color=color.new(color.blue,20), textcolor=color.white, style=label.style_label_up, size=size.small)
+else if pending_bos_bull and close <= last_ph
+    pending_bos_bull := false  // Closed below again — False BOS
+
+if pending_bos_bear and close < last_pl
+    trend            := -1
+    choch_bull       := false
+    pending_bos_bear := false
+    label.new(bar_index, low, "BOS▼", color=color.new(color.red,20), textcolor=color.white, style=label.style_label_down, size=size.small)
+else if pending_bos_bear and close >= last_pl
+    pending_bos_bear := false  // Closed above again — False BOS
+
+// ==========================================
+// Swing High/Low boundaries
+// ==========================================
+var float swing_high = na
+var float swing_low  = na
+
+if trend == 1
+    swing_low  := nz(swing_low, last_pl)
+    swing_high := math.max(nz(swing_high, high), high)
+else if trend == -1
+    swing_high := nz(swing_high, last_ph)
+    swing_low  := math.min(nz(swing_low, low), low)
+
+if ta.change(trend) != 0
+    if trend == 1
+        swing_low  := last_pl
+        swing_high := high
+    else if trend == -1
+        swing_high := last_ph
+        swing_low  := low
+
+// ==========================================
+// Premium / Discount zones
+// ==========================================
+swing_range    = swing_high - swing_low
+discount_level = swing_low  + (swing_range * pd_threshold)
+premium_level  = swing_high - (swing_range * pd_threshold)
+
+var bool touched_discount = false
+var bool touched_premium  = false
+
+if trend == 1 and low <= discount_level
+    touched_discount := true
+if trend == -1 and high >= premium_level
+    touched_premium  := true
+
+if trend != 1 or strategy.position_size != 0
+    touched_discount := false
+if trend != -1 or strategy.position_size != 0
+    touched_premium  := false
+
+// ==========================================
+// FVG Detection (Fair Value Gap)
+// ==========================================
+float bull_fvg_low  = high[2] < low[0] ? high[2] : na
+float bull_fvg_high = high[2] < low[0] ? low[0]  : na
+
+float bear_fvg_low  = low[2] > high[0] ? high[0] : na
+float bear_fvg_high = low[2] > high[0] ? low[2]  : na
+
+var float last_bull_fvg_l = na
+var float last_bull_fvg_h = na
+var float last_bear_fvg_l = na
+var float last_bear_fvg_h = na
+
+if not na(bull_fvg_low) and trend == 1
+    last_bull_fvg_l := bull_fvg_low
+    last_bull_fvg_h := bull_fvg_high
+    box.new(bar_index-2, bull_fvg_high, bar_index, bull_fvg_low, bgcolor=color.new(color.green,85), border_color=color.new(color.green,50))
+
+if not na(bear_fvg_low) and trend == -1
+    last_bear_fvg_l := bear_fvg_low
+    last_bear_fvg_h := bear_fvg_high
+    box.new(bar_index-2, bear_fvg_high, bar_index, bear_fvg_low, bgcolor=color.new(color.red,85), border_color=color.new(color.red,50))
+
+if not na(last_bull_fvg_l) and close < last_bull_fvg_l
+    last_bull_fvg_l := na
+    last_bull_fvg_h := na
+
+if not na(last_bear_fvg_h) and close > last_bear_fvg_h
+    last_bear_fvg_l := na
+    last_bear_fvg_h := na
+
+in_bull_fvg = not na(last_bull_fvg_l) and low <= last_bull_fvg_h and high >= last_bull_fvg_l
+in_bear_fvg = not na(last_bear_fvg_l) and low <= last_bear_fvg_h and high >= last_bear_fvg_l
+
+// ==========================================
+// Order Block (OB) Detection
+// ==========================================
+bull_ob_cond = close[2] < open[2] and close[0] > open[0] and close[0] > high[2]
+bear_ob_cond = close[2] > open[2] and close[0] < open[0] and close[0] < low[2]
+
+var float bull_ob_l = na
+var float bull_ob_h = na
+var float bear_ob_l = na
+var float bear_ob_h = na
+
+if bull_ob_cond and trend == 1
+    bull_ob_l := low[2]
+    bull_ob_h := high[2]
+    box.new(bar_index-2, high[2], bar_index, low[2], bgcolor=color.new(color.lime,80), border_color=color.new(color.lime,40))
+
+if bear_ob_cond and trend == -1
+    bear_ob_l := low[2]
+    bear_ob_h := high[2]
+    box.new(bar_index-2, high[2], bar_index, low[2], bgcolor=color.new(color.orange,80), border_color=color.new(color.orange,40))
+
+in_bull_ob = not na(bull_ob_l) and low <= bull_ob_h and high >= bull_ob_l
+in_bear_ob = not na(bear_ob_l) and low <= bear_ob_h and high >= bear_ob_l
+
+// ==========================================
+// Liquidity Sweep Detection
+// ==========================================
+liq_bull_sweep = low < last_pl[1] and close > last_pl[1]
+liq_bear_sweep = high > last_ph[1] and close < last_ph[1]
+
+if liq_bull_sweep and trend == 1
+    label.new(bar_index, low, "LIQ↑", color=color.new(color.aqua,20), textcolor=color.white, size=size.tiny, style=label.style_label_up)
+if liq_bear_sweep and trend == -1
+    label.new(bar_index, high, "LIQ↓", color=color.new(color.fuchsia,20), textcolor=color.white, size=size.tiny, style=label.style_label_down)
+
+// ==========================================
+// PA Confirmation — M5 Anti Fake-PA
+// ==========================================
+bullish_pa_raw = close[1] < open[1] and close > open
+bearish_pa_raw = close[1] > open[1] and close < open
+
+bull_body  = close - open
+bull_range = high - low
+bear_body  = open - close
+bear_range = high - low
+
+bull_body_ratio = bull_range > 0 ? bull_body / bull_range : 0.0
+bear_body_ratio = bear_range > 0 ? bear_body / bear_range : 0.0
+
+bull_upper_wick   = high - close
+bear_lower_wick   = close - low
+bull_wick_ratio   = bull_range > 0 ? bull_upper_wick / bull_range : 1.0
+bear_wick_ratio   = bear_range > 0 ? bear_lower_wick / bear_range : 1.0
+
+bull_close_pos = bull_range > 0 ? (close - low)  / bull_range : 0.0
+bear_close_pos = bear_range > 0 ? (high - close) / bear_range : 0.0
+
+bull_engulf = not pa_engulf or (close > open[1])
+bear_engulf = not pa_engulf or (close < open[1])
+
+bullish_pa = bullish_pa_raw
+           and bull_body_ratio >= pa_body_min
+           and bull_wick_ratio  <= pa_wick_max
+           and bull_close_pos  >= pa_close_min
+           and bull_engulf
+
+bearish_pa = bearish_pa_raw
+           and bear_body_ratio >= pa_body_min
+           and bear_wick_ratio  <= pa_wick_max
+           and bear_close_pos  >= pa_close_min
+           and bear_engulf
+
+// ==========================================
+// EMA & Trend filter
+// ==========================================
+ema_buf       = ema_buffer_pips * syminfo.mintick
+ema_long_cond  = use_ema ? (close > ema_line - ema_buf) : true
+ema_short_cond = use_ema ? (close < ema_line + ema_buf) : true
+long_trend_ok  = htf_long_ok and (not filter_counter_trend or not is_counter_long)
+short_trend_ok = htf_short_ok and (not filter_counter_trend or not is_counter_short)
+
+// ==========================================
+// Zone Confirmation
+// ==========================================
+bool zone_bull = false
+bool zone_bear = false
+
+if not use_zone_filter
+    zone_bull := true
+    zone_bear := true
+else if entry_mode == "Discount/Premium Only (Original 54% WR)"
+    zone_bull := touched_discount
+    zone_bear := touched_premium
+else if entry_mode == "Any FVG/OB (High Frequency)"
+    zone_bull := in_bull_fvg or in_bull_ob or touched_discount
+    zone_bear := in_bear_fvg or in_bear_ob or touched_premium
+else if entry_mode == "FVG/OB Inside Discount/Premium (Strict ICT)"
+    zone_bull := (in_bull_fvg or in_bull_ob) and touched_discount
+    zone_bear := (in_bear_fvg or in_bear_ob) and touched_premium
+
+// ==========================================
+// VSA (Volume Spread Analysis) & Volume Filter Logic
+// ==========================================
+// Rule 1: Volume สูง + แท่งใหญ่ผิดปกติ → ห้ามเข้า
+// Rule 2: Volume สูง + Spread สูง → ห้ามเข้า
+// Rule 3: Volume สูง แต่แท่งไม่ใหญ่และปิดแข็งแรงตามแนวโน้ม → อนุญาต
+// Rule 4: หลัง Spike ให้พัก 1–2 แท่งก่อนหา Pullback entry
+
+is_news_time = use_news_filter and not na(time(timeframe.period, news_session, news_timezone))
+
+vsa_bar_range  = high - low
+vsa_bar_body   = math.abs(close - open)
+vsa_atr        = ta.atr(14)
+vol_sma        = ta.sma(volume, vol_sma_len)
+
+// Baseline High Volume condition
+is_high_volume = use_vsa_filter and not na(volume) and not na(vol_sma) and vol_sma > 0 and (volume >= vol_sma * vol_spike_mult)
+
+// Abnormally Large Candle definition (Body or Range > ATR * large_candle_mult)
+is_large_candle = not na(vsa_atr) and vsa_atr > 0 and (vsa_bar_body >= vsa_atr * large_candle_mult or vsa_bar_range >= vsa_atr * large_candle_mult)
+
+// Abnormally High Spread definition (Range High-Low > ATR * high_spread_mult)
+is_high_spread  = not na(vsa_atr) and vsa_atr > 0 and (vsa_bar_range >= vsa_atr * high_spread_mult)
+
+// Rule 1 & Rule 2 Blocks
+bool vsa_rule1_large_block  = is_high_volume and is_large_candle
+bool vsa_rule2_spread_block = is_high_volume and is_high_spread
+
+// Volume Spike / Climax Bar Flag
+bool is_vsa_spike_bar = is_high_volume and (is_large_candle or is_high_spread)
+
+// Rule 3: Volume สูง แต่แท่งไม่ใหญ่และปิดแข็งแรงตามแนวโน้ม → อนุญาต (Absorption / Continuation)
+bool vsa_close_strong_bull = (vsa_bar_range > 0) and (close > open) and ((close - low) / vsa_bar_range >= vsa_min_close_pos)
+bool vsa_close_strong_bear = (vsa_bar_range > 0) and (close < open) and ((high - close) / vsa_bar_range >= vsa_min_close_pos)
+bool vsa_strong_close_trend = (trend == 1 and vsa_close_strong_bull) or (trend == -1 and vsa_close_strong_bear)
+
+bool vsa_rule3_absorption_allow = is_high_volume and not is_large_candle and not is_high_spread and vsa_strong_close_trend
+
+// Rule 4: หลัง Spike ให้พัก 1–2 แท่งก่อนหา Pullback entry
+var int last_vsa_spike_bar = na
+if is_vsa_spike_bar
+    last_vsa_spike_bar := bar_index
+
+bars_since_spike = not na(last_vsa_spike_bar) ? (bar_index - last_vsa_spike_bar) : 9999
+
+// Cooldown active during spike bar (0) and next 1..spike_cooldown_bars
+bool post_spike_cooldown = use_vsa_filter and (bars_since_spike >= 0 and bars_since_spike <= spike_cooldown_bars)
+
+// Post-spike pullback condition: After cooldown (bars_since_spike > spike_cooldown_bars), require pullback into valid entry zone
+bool post_spike_pullback_valid = true
+if use_vsa_filter and require_pullback_zone and (bars_since_spike > spike_cooldown_bars) and (bars_since_spike <= spike_cooldown_bars + 10)
+    post_spike_pullback_valid := (trend == 1 and zone_bull) or (trend == -1 and zone_bear)
+
+// Final VSA Block Evaluation
+bool vsa_blocked = false
+if use_vsa_filter
+    if vsa_rule3_absorption_allow
+        // Rule 3 overrides block -> Allowed!
+        vsa_blocked := false
+    else if vsa_rule1_large_block or vsa_rule2_spread_block or post_spike_cooldown or not post_spike_pullback_valid
+        vsa_blocked := true
+
+filter_blocked = is_news_time or vsa_blocked
+
+// Visual Annotations for VSA Logic
+bgcolor(is_news_time ? color.new(color.purple, 92) : na, title="News Block Active")
+bgcolor(vsa_rule1_large_block or vsa_rule2_spread_block ? color.new(color.red, 88) : na, title="VSA Climax Spike Block")
+bgcolor(post_spike_cooldown and not (vsa_rule1_large_block or vsa_rule2_spread_block) ? color.new(color.orange, 90) : na, title="VSA Post-Spike Cooldown")
+bgcolor(vsa_rule3_absorption_allow ? color.new(color.teal, 88) : na, title="VSA Absorption Allowed")
+
+if show_bar_debug and is_vsa_spike_bar
+    label.new(bar_index, high, "VSA SPIKE\n(Block)", color=color.new(color.red, 20), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+if show_bar_debug and vsa_rule3_absorption_allow
+    label.new(bar_index, low, "VSA ABSORP\n(Allow)", color=color.new(color.teal, 20), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+// ==========================================
+// Sideway & Range Filter Calculations
+// ==========================================
+[_, _, adx_val] = ta.dmi(adx_len, adx_len)
+adx_ok = not use_adx_filter or (not na(adx_val) and adx_val >= adx_min_threshold)
+
+chop_atr_sum = math.sum(ta.atr(1), chop_len)
+chop_high_low_diff = ta.highest(high, chop_len) - ta.lowest(low, chop_len)
+chop_val = chop_high_low_diff > 0 ? 100.0 * math.log10(chop_atr_sum / chop_high_low_diff) / math.log10(chop_len) : 100.0
+chop_ok = not use_chop_filter or (not na(chop_val) and chop_val <= chop_max_threshold)
+
+atr_14 = ta.atr(14)
+atr_sma_50 = ta.sma(atr_14, 50)
+atr_ratio = not na(atr_sma_50) and atr_sma_50 > 0 ? (atr_14 / atr_sma_50) : 1.0
+atr_ok = not use_atr_filter or atr_ratio >= atr_min_ratio
+
+sideway_blocked = (use_adx_filter and not adx_ok) or (use_chop_filter and not chop_ok) or (use_atr_filter and not atr_ok)
+bgcolor(sideway_blocked ? color.new(color.blue, 94) : na, title="Sideway Filter Block Active")
+
+in_force_close_time = use_force_close and not na(time(timeframe.period, force_close_session, force_close_tz == "Exchange" ? syminfo.timezone : force_close_tz))
+
+// ==========================================
+// Daily Risk Management (Max Loss Trades)
+// ==========================================
+var int daily_loss_count = 0
+var int last_loss_exit_time = na
+var bool last_trade_was_loss = false
+daily_reset_tz = daily_loss_timezone == "Exchange" ? syminfo.timezone : daily_loss_timezone
+is_new_risk_day = year(time, daily_reset_tz) != year(time[1], daily_reset_tz) or month(time, daily_reset_tz) != month(time[1], daily_reset_tz) or dayofmonth(time, daily_reset_tz) != dayofmonth(time[1], daily_reset_tz)
+if is_new_risk_day
+    daily_loss_count := 0
+
+if strategy.closedtrades > nz(strategy.closedtrades[1], 0)
+    last_closed_index = strategy.closedtrades - 1
+    last_pnl = strategy.closedtrades.profit(last_closed_index)
+    if last_pnl < 0
+        daily_loss_count := daily_loss_count + 1
+        last_loss_exit_time := strategy.closedtrades.exit_time(last_closed_index)
+        last_trade_was_loss := true
+    else
+        last_trade_was_loss := false
+
+daily_loss_blocked = use_max_daily_losses and (daily_loss_count >= max_daily_loss_count)
+loss_cooldown_ms = loss_cooldown_mins * 60 * 1000
+loss_cooldown_blocked = use_loss_cooldown and last_trade_was_loss and not na(last_loss_exit_time) and (time_close - last_loss_exit_time < loss_cooldown_ms)
+
+// ==========================================
+// Final Entry Conditions
+// ==========================================
+bool longCondition  = false
+bool shortCondition = false
+
+if test_mode
+    longCondition  := trend == 1  and strategy.position_size == 0 and not in_force_close_time and not daily_loss_blocked and not loss_cooldown_blocked
+    shortCondition := trend == -1 and strategy.position_size == 0 and not in_force_close_time and not daily_loss_blocked and not loss_cooldown_blocked
+else
+    _long_base  = trend == 1  and bullish_pa and strategy.position_size == 0
+    _short_base = trend == -1 and bearish_pa and strategy.position_size == 0
+    _long_zone  = use_zone_filter ? zone_bull : true
+    _short_zone = use_zone_filter ? zone_bear : true
+    _long_ema   = ema_long_cond
+    _short_ema  = ema_short_cond
+    _long_choch  = not require_choch or choch_bull
+    _short_choch = not require_choch or choch_bear
+
+    longCondition  := _long_base  and _long_zone  and _long_ema  and long_trend_ok  and not filter_blocked and not sideway_blocked and _long_choch and not in_force_close_time and not daily_loss_blocked and not loss_cooldown_blocked
+    shortCondition := _short_base and _short_zone and _short_ema and short_trend_ok and not filter_blocked and not sideway_blocked and _short_choch and not in_force_close_time and not daily_loss_blocked and not loss_cooldown_blocked
+
+if show_bar_debug
+    _t = trend == 1 ? "Bull" : trend == -1 ? "Bear" : "—"
+    _pa_l = bullish_pa ? "bPA✓" : bullish_pa_raw ? "bPA✗f" : ""
+    _pa_s = bearish_pa ? "sPA✓" : bearish_pa_raw ? "sPA✗f" : ""
+    _lbl = _t + (str.length(_pa_l) > 0 ? "|" + _pa_l : "") + (str.length(_pa_s) > 0 ? "|" + _pa_s : "")
+    _col = trend == 1 ? color.new(color.teal, 40) : trend == -1 ? color.new(color.red, 40) : color.new(color.gray, 60)
+    label.new(bar_index, high, _lbl, style=label.style_label_down, color=_col, textcolor=color.white, size=size.tiny)
+
+bgcolor(longCondition  ? color.new(color.green, 80) : na, title="Debug Long")
+bgcolor(shortCondition ? color.new(color.red,   80) : na, title="Debug Short")
+
+// ==========================================
+// Debug Table — Real-time Status Display
+// ==========================================
+var table dbg_tbl = table.new(position.top_right, 3, 16,
+     bgcolor      = color.new(color.black, 15),
+     border_width = 1,
+     border_color = color.new(color.gray, 50))
+
+c_ok  = color.new(color.teal,   20)
+c_no  = color.new(color.red,    20)
+c_hdr = color.new(color.navy,   20)
+c_na  = color.new(color.gray,   50)
+
+if show_debug and barstate.islast
+    table.cell(dbg_tbl, 0, 0, "Condition",       bgcolor=c_hdr, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 0, "LONG",            bgcolor=c_hdr, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 0, "SHORT",           bgcolor=c_hdr, text_color=color.white, text_size=size.small)
+
+    table.cell(dbg_tbl, 0, 1, "Trend",           bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 1, trend == 1  ? "✓ Bull" : str.tostring(trend), bgcolor=(trend == 1  ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 1, trend == -1 ? "✓ Bear" : str.tostring(trend), bgcolor=(trend == -1 ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    table.cell(dbg_tbl, 0, 2, "Zone",            bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 2, zone_bull ? "✓ OK"  : touched_discount ? "✓ Touch" : "✗ No Touch", bgcolor=(zone_bull ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 2, zone_bear ? "✓ OK"  : touched_premium  ? "✓ Touch" : "✗ No Touch", bgcolor=(zone_bear ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    table.cell(dbg_tbl, 0, 3, "PA Signal",       bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 3, bullish_pa ? "✓ OK" : (bullish_pa_raw ? "✗ Filter" : "✗ No PA"), bgcolor=(bullish_pa ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 3, bearish_pa ? "✓ OK" : (bearish_pa_raw ? "✗ Filter" : "✗ No PA"), bgcolor=(bearish_pa ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    table.cell(dbg_tbl, 0, 4, "PA Body/Wick/Pos",bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 4,
+         str.tostring(math.round(bull_body_ratio,2)) + " / " +
+         str.tostring(math.round(bull_wick_ratio,2)) + " / " +
+         str.tostring(math.round(bull_close_pos,2)),
+         bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 4,
+         str.tostring(math.round(bear_body_ratio,2)) + " / " +
+         str.tostring(math.round(bear_wick_ratio,2)) + " / " +
+         str.tostring(math.round(bear_close_pos,2)),
+         bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+
+    table.cell(dbg_tbl, 0, 5, "EMA 200",         bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 5, ema_long_cond  ? "✓ Above" : "✗ Below", bgcolor=(ema_long_cond  ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 5, ema_short_cond ? "✓ Below" : "✗ Above", bgcolor=(ema_short_cond ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    _dbg_choch_long  = not require_choch or choch_bull
+    _dbg_choch_short = not require_choch or choch_bear
+    table.cell(dbg_tbl, 0, 6, "CHoCH Confirm", bgcolor=c_na, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 6, _dbg_choch_long  ? "✓ Bull" : "✕ Required", bgcolor=(_dbg_choch_long  ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 6, _dbg_choch_short ? "✓ Bear" : "✕ Required", bgcolor=(_dbg_choch_short ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    // VSA Status Display
+    table.cell(dbg_tbl, 0, 7, "VSA Filter",       bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    _vsa_lbl = vsa_rule3_absorption_allow ? "🟢 ABSORP ALLOW" : (vsa_rule1_large_block ? "⚠ VOL+LARGE" : vsa_rule2_spread_block ? "⚠ VOL+SPREAD" : post_spike_cooldown ? "⚠ COOLDOWN" : not post_spike_pullback_valid ? "⚠ NEED PULLBACK" : "✓ CLEAR")
+    _vsa_bg  = vsa_rule3_absorption_allow ? c_ok : (vsa_blocked ? c_no : c_ok)
+    table.cell(dbg_tbl, 1, 7, _vsa_lbl, bgcolor=_vsa_bg, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 7, _vsa_lbl, bgcolor=_vsa_bg, text_color=color.white, text_size=size.small)
+
+    table.cell(dbg_tbl, 0, 8, "Filter Block",    bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    _filter_lbl = is_news_time ? "⚠ NEWS BLOCK" : vsa_blocked ? "⚠ VSA BLOCK" : in_force_close_time ? "⚠ TIME CLOSE" : "✓ Clear"
+    _filter_bg  = (filter_blocked or in_force_close_time) ? c_no : c_ok
+    table.cell(dbg_tbl, 1, 8, _filter_lbl, bgcolor=_filter_bg, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 8, _filter_lbl, bgcolor=_filter_bg, text_color=color.white, text_size=size.small)
+
+    table.cell(dbg_tbl, 0, 9, "Sideway Block",   bgcolor=c_na,  text_color=color.white, text_size=size.small)
+    _sw_lbl = sideway_blocked ? "⚠ SIDEWAY (" + f_n(adx_val) + ")" : "✓ Clear (" + f_n(adx_val) + ")"
+    table.cell(dbg_tbl, 1, 9, _sw_lbl, bgcolor=(sideway_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 9, _sw_lbl, bgcolor=(sideway_blocked ? c_no : c_ok), text_color=color.white, text_size=size.small)
+
+    table.cell(dbg_tbl, 0, 10, "Swing H/L",       bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 10, str.tostring(math.round(swing_high,2)) + " / " + str.tostring(math.round(swing_low,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 10, "Disc:" + str.tostring(math.round(discount_level,2)) + " Prem:" + str.tostring(math.round(premium_level,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+
+    table.cell(dbg_tbl, 0, 11, "EMA200 val",      bgcolor=c_na,  text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 11, str.tostring(math.round(ema_line,2)), bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 11, "Close: " + str.tostring(math.round(close,2)),        bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+
+    table.cell(dbg_tbl, 0, 12, "=== READY ===",   bgcolor=c_hdr, text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 1, 12, longCondition  ? "🟢 LONG FIRE!"  : "🔴 NO ENTRY", bgcolor=(longCondition  ? c_ok : c_no), text_color=color.white, text_size=size.small)
+    table.cell(dbg_tbl, 2, 12, shortCondition ? "🟢 SHORT FIRE!" : "🔴 NO ENTRY", bgcolor=(shortCondition ? c_ok : c_no), text_color=color.white, text_size=size.small)
+
+    _daily_lbl = str.tostring(daily_loss_count) + "/" + str.tostring(max_daily_loss_count)
+    table.cell(dbg_tbl, 0, 13, "Daily Loss", bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 13, _daily_lbl, bgcolor=(daily_loss_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 13, daily_loss_blocked ? "BLOCKED" : daily_reset_tz, bgcolor=(daily_loss_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
+
+    cooldown_remaining_mins = loss_cooldown_blocked ? math.ceil((loss_cooldown_ms - (time_close - last_loss_exit_time)) / 60000.0) : 0
+    cooldown_label = loss_cooldown_blocked ? str.tostring(cooldown_remaining_mins) + "m left" : "Clear"
+    table.cell(dbg_tbl, 0, 14, "Loss Cooldown", bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 14, cooldown_label, bgcolor=(loss_cooldown_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 14, cooldown_label, bgcolor=(loss_cooldown_blocked ? c_no : c_ok), text_color=color.white, text_size=size.tiny)
+
+    _spike_cnt_lbl = bars_since_spike <= 20 ? str.tostring(bars_since_spike) + " bars ago" : "No Spike"
+    table.cell(dbg_tbl, 0, 15, "Last Spike", bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 1, 15, _spike_cnt_lbl, bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+    table.cell(dbg_tbl, 2, 15, _spike_cnt_lbl, bgcolor=c_na, text_color=color.white, text_size=size.tiny)
+
+// ==========================================
+// Execution & Risk Management
+// ==========================================
+var float  t_entry_long  = na
+var float  t_sl_long     = na
+var float  t_tp_long     = na
+var float  t_entry_short = na
+var float  t_sl_short    = na
+var float  t_tp_short    = na
+var float  t_initial_risk_long  = na
+var float  t_initial_risk_short = na
+var string sid_long      = na
+var string sid_short     = na
+
+pos_closed_long  = strategy.position_size <= 0 and strategy.position_size[1] > 0
+pos_closed_short = strategy.position_size >= 0 and strategy.position_size[1] < 0
+
+is_entering_long  = false
+is_entering_short = false
+
+tp_val  = tp_pips  * syminfo.mintick
+be_val  = be_pips  * syminfo.mintick
+be_val_low = be_pips_low_vol * syminfo.mintick
+t1_val  = trail1_pips * syminfo.mintick
+lk_val  = lock1_pips  * syminfo.mintick
+sl_buffer_val = sl_buffer * syminfo.mintick
+
+// Adaptive BE: determine volume regime for current bar
+// Volume below SMA = low vol regime -> use tighter BE
+is_low_vol_regime = use_adaptive_be and not na(volume) and not na(vol_sma) and vol_sma > 0 and (volume < vol_sma)
+
+// Store volume regime at entry time (persists for the life of the trade)
+var bool entry_was_low_vol_long  = false
+var bool entry_was_low_vol_short = false
+
+calc_qty = math.max(fixed_lot, syminfo.mincontract)
+
+if test_mode
+    _sl_offset = 50 * syminfo.mintick * 100
+    _tp_offset = 200 * syminfo.mintick * 100
+    if longCondition
+        strategy.entry("Buy", strategy.long,  qty=calc_qty)
+        strategy.exit("XBuy",  "Buy",  stop=close - _sl_offset, limit=close + _tp_offset)
+    if shortCondition
+        strategy.entry("Sell", strategy.short, qty=calc_qty)
+        strategy.exit("XSell", "Sell", stop=close + _sl_offset, limit=close - _tp_offset)
+
+if longCondition
+    sl_price   = use_fixed_sl ? (close - (fixed_sl_pips * syminfo.mintick)) : (nz(swing_low, close - (max_sl_pips * syminfo.mintick)) - sl_buffer_val)
+    risk       = close - sl_price
+    max_sl_val = max_sl_pips * syminfo.mintick
+    if not use_fixed_sl and (na(risk) or risk > max_sl_val or risk <= 0)
+        risk     := max_sl_val
+        sl_price := close - max_sl_val
+    if risk > 0
+        tp_price         = close + tp_val
+        strategy.entry("Buy", strategy.long, qty=calc_qty)
+        t_entry_long     := close
+        t_sl_long        := sl_price
+        t_tp_long        := tp_price
+        t_initial_risk_long := risk
+        s                = str.tostring(time) + "_BUY"
+        sid_long         := s
+        is_entering_long := true
+        entry_was_low_vol_long := is_low_vol_regime
+        zone_tag         = in_bull_fvg ? "FVG" : in_bull_ob ? "OB" : "PD"
+        alert(f_open("BUY", close, sl_price, tp_price, s, calc_qty, be_pips, trail1_pips, lock1_pips, tp_pips), alert.freq_once_per_bar_close)
+
+if shortCondition
+    sl_price   = use_fixed_sl ? (close + (fixed_sl_pips * syminfo.mintick)) : (nz(swing_high, close + (max_sl_pips * syminfo.mintick)) + sl_buffer_val)
+    risk       = sl_price - close
+    max_sl_val = max_sl_pips * syminfo.mintick
+    if not use_fixed_sl and (na(risk) or risk > max_sl_val or risk <= 0)
+        risk     := max_sl_val
+        sl_price := close + max_sl_val
+    if risk > 0
+        tp_price          = close - tp_val
+        strategy.entry("Sell", strategy.short, qty=calc_qty)
+        t_entry_short     := close
+        t_sl_short        := sl_price
+        t_tp_short        := tp_price
+        t_initial_risk_short := risk
+        s                 = str.tostring(time) + "_SELL"
+        sid_short         := s
+        is_entering_short := true
+        entry_was_low_vol_short := is_low_vol_regime
+        alert(f_open("SELL", close, sl_price, tp_price, s, calc_qty, be_pips, trail1_pips, lock1_pips, tp_pips), alert.freq_once_per_bar_close)
+
+// ==========================================
+// Scaled Breakeven & Trailing
+// ==========================================
+var float max_price = na
+var float min_price = na
+
+if strategy.position_size == 0
+    max_price := na
+    min_price := na
+
+if strategy.position_size > 0
+    max_price  := na(max_price) ? high : math.max(max_price, high)
+    ep          = strategy.position_avg_price
+    profit_d    = max_price - ep
+    // Adaptive BE: use low-vol BE if entry was in low volume
+    active_be_val = (use_adaptive_be and entry_was_low_vol_long) ? be_val_low : be_val
+    new_sl = t_sl_long
+    if profit_d >= t1_val
+        locked  = ep + lk_val
+        if use_stepped_trail
+            step_multiplier = math.floor(profit_d / lk_val)
+            locked_profit = (step_multiplier - 1) * lk_val
+            locked := ep + locked_profit
+        new_sl := na(new_sl) ? locked : math.max(new_sl, locked)
+    else if profit_d >= active_be_val
+        be_locked = ep + (10 * syminfo.mintick)
+        new_sl := na(new_sl) ? be_locked : math.max(new_sl, be_locked)
+    t_sl_long  := new_sl
+
+if strategy.position_size < 0
+    min_price  := na(min_price) ? low : math.min(min_price, low)
+    ep          = strategy.position_avg_price
+    profit_d    = ep - min_price
+    // Adaptive BE: use low-vol BE if entry was in low volume
+    active_be_val = (use_adaptive_be and entry_was_low_vol_short) ? be_val_low : be_val
+    new_sl = t_sl_short
+    if profit_d >= t1_val
+        locked  = ep - lk_val
+        if use_stepped_trail
+            step_multiplier = math.floor(profit_d / lk_val)
+            locked_profit = (step_multiplier - 1) * lk_val
+            locked := ep - locked_profit
+        new_sl := na(new_sl) ? locked : math.min(new_sl, locked)
+    else if profit_d >= active_be_val
+        be_locked = ep - (10 * syminfo.mintick)
+        new_sl := na(new_sl) ? be_locked : math.min(new_sl, be_locked)
+    t_sl_short := new_sl
+
+// ==========================================
+// Confirmed Early Exit
+// ==========================================
+buy_structure_break  = not na(last_pl) and close < last_pl
+sell_structure_break = not na(last_ph) and close > last_ph
+htf_exit_enabled     = exit_on_htf_reversal and (use_h1_trend or use_h4_trend) and htf_data_ok
+buy_htf_reversal     = htf_exit_enabled and (not use_h1_trend or h1_bear) and (not use_h4_trend or h4_bear)
+sell_htf_reversal    = htf_exit_enabled and (not use_h1_trend or h1_bull) and (not use_h4_trend or h4_bull)
+
+buy_bad_signal  = (exit_on_opposite_choch and choch_bear) or (exit_on_structure_break and buy_structure_break) or buy_htf_reversal
+sell_bad_signal = (exit_on_opposite_choch and choch_bull) or (exit_on_structure_break and sell_structure_break) or sell_htf_reversal
+
+var int early_buy_bad_bars  = 0
+var int early_sell_bad_bars = 0
+
+if barstate.isconfirmed
+    if strategy.position_size > 0
+        early_buy_bad_bars  := buy_bad_signal ? early_buy_bad_bars + 1 : 0
+        early_sell_bad_bars := 0
+    else if strategy.position_size < 0
+        early_sell_bad_bars := sell_bad_signal ? early_sell_bad_bars + 1 : 0
+        early_buy_bad_bars  := 0
+    else
+        early_buy_bad_bars  := 0
+        early_sell_bad_bars := 0
+
+held_bars = strategy.opentrades > 0 ? bar_index - strategy.opentrades.entry_bar_index(0) : 0
+long_adverse_r  = strategy.position_size > 0 and not na(t_initial_risk_long) and t_initial_risk_long > 0 ? math.max(0.0, strategy.position_avg_price - close) / t_initial_risk_long : 0.0
+short_adverse_r = strategy.position_size < 0 and not na(t_initial_risk_short) and t_initial_risk_short > 0 ? math.max(0.0, close - strategy.position_avg_price) / t_initial_risk_short : 0.0
+
+long_confirmed_exit  = barstate.isconfirmed and buy_bad_signal and early_buy_bad_bars >= exit_confirm_bars
+short_confirmed_exit = barstate.isconfirmed and sell_bad_signal and early_sell_bad_bars >= exit_confirm_bars
+long_risk_exit       = barstate.isconfirmed and buy_bad_signal and long_adverse_r >= early_exit_risk_r
+short_risk_exit      = barstate.isconfirmed and sell_bad_signal and short_adverse_r >= early_exit_risk_r
+long_time_exit       = barstate.isconfirmed and use_time_stop and held_bars >= time_stop_bars and strategy.position_size > 0 and close <= strategy.position_avg_price
+short_time_exit      = barstate.isconfirmed and use_time_stop and held_bars >= time_stop_bars and strategy.position_size < 0 and close >= strategy.position_avg_price
+
+if use_early_exit and strategy.position_size > 0 and (long_confirmed_exit or long_risk_exit or long_time_exit)
+    long_exit_reason = long_time_exit ? "Time Stop" : (exit_on_structure_break and buy_structure_break) ? "Structure Break" : (exit_on_opposite_choch and choch_bear) ? "Bearish CHoCH" : "H1/H4 Reversal"
+    strategy.close("Buy", comment="Early Exit: " + long_exit_reason)
+    label.new(bar_index, high, "EARLY EXIT BUY\n" + long_exit_reason, color=color.new(color.orange, 10), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+if use_early_exit and strategy.position_size < 0 and (short_confirmed_exit or short_risk_exit or short_time_exit)
+    short_exit_reason = short_time_exit ? "Time Stop" : (exit_on_structure_break and sell_structure_break) ? "Structure Break" : (exit_on_opposite_choch and choch_bull) ? "Bullish CHoCH" : "H1/H4 Reversal"
+    strategy.close("Sell", comment="Early Exit: " + short_exit_reason)
+    label.new(bar_index, low, "EARLY EXIT SELL\n" + short_exit_reason, color=color.new(color.orange, 10), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+// ==========================================
+// Exits (Hard TP & dynamic SL)
+// ==========================================
+if strategy.position_size > 0 and not na(t_sl_long) and not na(t_tp_long)
+    strategy.exit("Exit Buy", "Buy", stop=t_sl_long, limit=t_tp_long)
+
+if strategy.position_size < 0 and not na(t_sl_short) and not na(t_tp_short)
+    strategy.exit("Exit Sell", "Sell", stop=t_sl_short, limit=t_tp_short)
+
+if in_force_close_time
+    strategy.close_all(comment="Force Close at 4 AM")
+
+if pos_closed_long and not is_entering_long
+    t_entry_long  := na
+    t_sl_long     := na
+    t_tp_long     := na
+    t_initial_risk_long := na
+    sid_long      := na
+
+if pos_closed_short and not is_entering_short
+    t_entry_short := na
+    t_sl_short    := na
+    t_tp_short    := na
+    t_initial_risk_short := na
+    sid_short     := na
+
+// ==========================================
+// Close alert
+// ==========================================
+if strategy.closedtrades > nz(strategy.closedtrades[1], 0)
+    idx    = strategy.closedtrades - 1
+    pnl    = strategy.closedtrades.profit(idx)
+    res    = pnl > 0 ? "WIN" : "LOSS"
+    ep     = strategy.closedtrades.entry_price(idx)
+    xp     = strategy.closedtrades.exit_price(idx)
+    is_lng = strategy.closedtrades.size(idx) > 0
+    fb     = str.tostring(time) + "_CLOSE"
+    cid    = is_lng ? (na(sid_long) ? fb : sid_long) : (na(sid_short) ? fb : sid_short)
+    alert(f_close(cid, ep, xp, pnl, res), alert.freq_once_per_bar_close)
+
+// ==========================================
+// Visuals: Premium/Discount zones
+// ==========================================
+var box pd_box = na
+var box pm_box = na
+if barstate.islast and not na(swing_high) and not na(swing_low)
+    if not na(pd_box)
+        box.delete(pd_box)
+    if not na(pm_box)
+        box.delete(pm_box)
+    pd_box := box.new(bar_index-50, discount_level, bar_index+10, swing_low, bgcolor=color.new(color.green,90), border_color=color.new(color.green,60))
+    pm_box := box.new(bar_index-50, swing_high, bar_index+10, premium_level, bgcolor=color.new(color.red,90), border_color=color.new(color.red,60))

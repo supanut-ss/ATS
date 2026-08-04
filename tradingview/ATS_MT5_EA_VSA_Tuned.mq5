@@ -13,19 +13,19 @@
 
 //--- Input Parameters
 input group "== Webhook Connection Settings =="
-input bool     InpEnableWebhookPolling = false;                 // เปิดใช้งานการดึงสัญญาณการเทรดผ่าน Webhook
-input string   InpBackendURL           = "https://ats.thaipesleague.com/demo"; // ลิงก์ API หลังบ้าน C# (โหมด Demo)
-input string   InpAuthToken            = "ats_demo_sec_1122334455667788"; // โทเค็นยืนยันตัวตนสำหรับดึงสัญญาณ (Demo)
+input bool     InpEnableWebhookPolling = true;                 // เปิดใช้งานการดึงสัญญาณการเทรดผ่าน Webhook
+input string   InpBackendURL           = "https://ats.thaipesleague.com"; // ลิงก์ API หลังบ้าน C# (ตัวจริง)
+input string   InpAuthToken            = "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f"; // โทเค็นยืนยันตัวตนสำหรับดึงสัญญาณ
 input int      InpPollInterval         = 10000;                 // รอบเวลาการดึงข้อมูลจากหลังบ้าน (มิลลิวินาที)
 
 input group "== Trade Settings =="
-input int      InpSlippage             = 30;                    // ระยะ Slippage สูงสุดที่ยอมรับได้ (Points)
+input int      InpSlippage             = 20;                    // ระยะ Slippage สูงสุดที่ยอมรับได้ (Points)
 input int      InpMagic                = 88188;                 // หมายเลข Magic Number ของ EA สำหรับแยกแยะออเดอร์
 
 input group "== Algorithm Settings (Pure Structure + Liquidity/CHoCH/BOS/FVG/OB) =="
 input int      InpPivotLength          = 5;                     // จำนวนแท่งย้อนหลังสำหรับหาจุดกลับตัว Pivot
 input double   InpSLBuffer             = 1.0;                   // ระยะเผื่อของ Stop Loss จากจุดต่ำสุด/สูงสุด (Points)
-input int      InpMaxSLPips            = 10000;                 // ระยะ Stop Loss สูงสุดในโหมดคำนวณอัตโนมัติ (Points)
+input int      InpMaxSLPips            = 12000;                 // ระยะ Stop Loss สูงสุดในโหมดคำนวณอัตโนมัติ (Points)
 input double   InpPDThreshold          = 0.618;                 // ระดับราคาเป้าหมาย Premium/Discount (ปกติ 0.618)
 
 enum ENUM_ENTRY_MODE {
@@ -35,15 +35,15 @@ enum ENUM_ENTRY_MODE {
 };
 input group "== Entry Logic =="
 input ENUM_ENTRY_MODE InpEntryMode = ENTRY_MODE_DISCOUNT_ONLY;  // โหมดการเข้าซื้อขาย (Discount, FVG, Strict ICT)
-input bool     InpRequireCHoCH          = true;                  // Require directional CHoCH confirmation before entry
+input bool     InpRequireCHoCH          = false;                 // Require directional CHoCH confirmation before entry
 
 input group "== Scalping Risk =="
 input bool     InpUseFixedSL           = true;                  // เปิดใช้งานการตั้งค่า Stop Loss แบบคงที่
-input int      InpFixedSLPips          = 5000;                  // ระยะ Stop Loss แบบคงที่ (Points)
+input int      InpFixedSLPips          = 7000;                  // ระยะ Stop Loss แบบคงที่ (Points)
 
 input group "== Daily Loss Guard =="
 input bool     InpUseDailyLossGuard    = true;                  // Stop opening new trades after the daily loss limit
-input int      InpMaxDailyLossCount    = 4;                     // Maximum losing positions per symbol and magic number
+input int      InpMaxDailyLossCount    = 3;                     // Maximum losing positions per symbol and magic number
 input string   InpDailyLossTimezone    = "Asia/Bangkok";        // Daily reset timezone: UTC, Asia/Bangkok, America/New_York
 
 input group "== M5 Anti Fake-PA =="
@@ -66,26 +66,26 @@ input bool     InpFilterCounterTrend   = false;                 // ปฏิเ�
 
 input group "== News & Volume Filters =="
 input bool     InpUseNewsFilter        = true;                  // เปิดใช้งานตัวกรองงดเทรดในช่วงเวลาข่าว
-input string   InpNewsSession          = "0300-0500,1930-2030:23456"; // ช่วงเวลาที่บล็อกไม่ให้เทรด (UTC)
+input string   InpNewsSession          = "0300-0500:23456;1930-2030:6"; // ช่วงเวลาบล็อกเทรด คั่นด้วย ;
 input string   InpNewsTimezone         = "Asia/Bangkok";        // เขตเวลาสำหรับกรองข่าว (เช่น Asia/Bangkok)
 input bool     InpUseVolFilter         = true;                  // เปิดใช้งานตัวกรองปริมาณซื้อขายผิดปกติ (Volume Spike)
-input double   InpVolSpikeMult         = 2.0;                   // ตัวคูณเกณฑ์ความสูงของ Volume Spike
+input double   InpVolSpikeMult         = 2.2;                   // ตัวคูณเกณฑ์ความสูงของ Volume Spike
 input int      InpVolSmaLen            = 20;                    // ความยาว SMA สำหรับคำนวณปริมาณซื้อขายปกติ
-input int      InpVolSpikeLookback     = 3;                     // ระยะเวลาที่จะทำการบล็อกออเดอร์หลังจากเกิดสไปค์ (แท่ง)
+input int      InpVolSpikeLookback     = 1;                     // ระยะเวลาที่จะทำการบล็อกออเดอร์หลังจากเกิดสไปค์ (แท่ง)
 
 input group "== Sideway & Range Filters =="
 input bool     InpUseADXFilter         = true;                  // เปิดใช้งานตัวกรองความแรงของเทรนด์ด้วย ADX
 input int      InpADXLen               = 14;                    // ความยาวอินดิเคเตอร์ ADX
-input double   InpADXMinThreshold      = 20.0;                  // ค่าความแรงเทรนด์ ADX ขั้นต่ำที่อนุญาตให้เทรด
+input double   InpADXMinThreshold      = 18.0;                  // ค่าความแรงเทรนด์ ADX ขั้นต่ำที่อนุญาตให้เทรด
 input bool     InpUseChopFilter        = true;                  // เปิดใช้งานตัวกรองตลาดไซด์เวย์ด้วย Choppiness Index
 input int      InpChopLen              = 14;                    // ความยาวอินดิเคเตอร์ Choppiness Index
-input double   InpChopMaxThreshold     = 60.0;                  // ค่าสูงสุดของ CHOP ที่อนุญาต (หลีกเลี่ยงไซด์เวย์จัด)
+input double   InpChopMaxThreshold     = 62.0;                  // ค่าสูงสุดของ CHOP ที่อนุญาต (หลีกเลี่ยงไซด์เวย์จัด)
 input bool     InpUseATRFilter         = true;                  // เปิดใช้งานตัวกรองภาวะตลาดบีบตัวแรงด้วย ATR Ratio
-input double   InpATRMinRatio          = 0.80;                  // อัตราส่วนความผันผวน ATR เทียบกับเส้นเฉลี่ย 50 วัน
+input double   InpATRMinRatio          = 0.75;                  // อัตราส่วนความผันผวน ATR เทียบกับเส้นเฉลี่ย 50 วัน
 
 input group "== Loss Cooldown Filter =="
 input bool     InpUseLossCooldown      = true;                  // พักเปิดไม้ใหม่หลังปิดสถานะขาดทุน
-input int      InpLossCooldownMins     = 60;                    // ระยะเวลาพักหลังไม้แพ้ (นาที)
+input int      InpLossCooldownMins     = 45;                    // ระยะเวลาพักหลังไม้แพ้ (นาที)
 
 input group "== Early Exit Management =="
 input bool     InpUseEarlyExit         = true;                  // ปิดสถานะก่อนถึง Hard SL เมื่อโครงสร้างเสีย
@@ -94,15 +94,17 @@ input bool     InpExitOnStructureBreak = true;                  // ปิดเ�
 input int      InpExitConfirmBars      = 2;                     // จำนวนแท่งปิดยืนยันสถานการณ์เสีย
 input bool     InpExitOnHTFReversal    = false;                 // ปิดเมื่อ H1/H4 ที่เปิดใช้กลับทิศพร้อมกัน
 input bool     InpUseTimeStop          = true;                  // ปิดไม้ไม่เดินและยังขาดทุนเมื่อถือเกินกำหนด
-input int      InpTimeStopBars         = 12;                    // จำนวนแท่งสูงสุดก่อน Time Stop
-input double   InpEarlyExitRiskR       = 0.70;                  // ขาดทุนถึงสัดส่วน R นี้ให้ข้ามเวลายืนยันเมื่อมีสัญญาณเสีย
+input int      InpTimeStopBars         = 20;                    // จำนวนแท่งสูงสุดก่อน Time Stop
+input double   InpEarlyExitRiskR       = 0.65;                  // ขาดทุนถึงสัดส่วน R นี้ให้ข้ามเวลายืนยันเมื่อมีสัญญาณเสีย
 
 input group "== Breakeven & Scaled Trailing Stop =="
-input int      InpBEPips               = 5000;                  // ระยะกำไรที่เริ่มเปิดใช้งานล็อคทุน Breakeven (Points)
-input int      InpTrailLevel1Pips      = 10000;                 // ระยะกำไรที่เริ่มรัน Trailing Stop เลื่อนตามราคา (Points)
-input int      InpTrailLevel1LockPips  = 5000;                  // ระยะล็อกกำไรขั้นต่ำของ Trailing Stop (Points)
+input int      InpBEPips               = 8000;                  // ระยะกำไรที่เริ่มเปิดใช้งานล็อคทุน Breakeven (Points)
+input int      InpBELowVolPips         = 5000;                  // ระยะกำไรที่ล็อคทุนเมื่อ Volume ต่ำ (Points)
+input bool     InpUseAdaptiveBE        = true;                  // เปิดใช้งาน Adaptive BE
+input int      InpTrailLevel1Pips      = 15000;                 // ระยะกำไรที่เริ่มรัน Trailing Stop เลื่อนตามราคา (Points)
+input int      InpTrailLevel1LockPips  = 7000;                  // ระยะล็อกกำไรขั้นต่ำของ Trailing Stop (Points)
 input bool     InpUseSteppedTrail      = true;                  // ใช้ Trailing Stop แบบขยับตามระยะห่าง (true) หรือแบบตายตัว (false)
-input int      InpTPPips               = 20000;                 // ระยะเป้าหมายในการปิดทำกำไรสูงสุด Take Profit (Points)
+input int      InpTPPips               = 42000;                 // ระยะเป้าหมายในการปิดทำกำไรสูงสุด Take Profit (Points)
 
 input group "== Force Close Settings =="
 input bool     InpUseForceClose        = true;                  // เปิดใช้งานระบบปิดออเดอร์ทั้งหมดโดยบังคับตามเวลา
@@ -213,18 +215,23 @@ void RemoveTrackedPosition(int idx)
 
 void SendLocalTradeToBackend(string id, string action, string symbol, double volume,
                              double entry_price, double sl, double tp, string status,
-                             ulong ticket, double exit_price, double profit)
+                             ulong ticket, double exit_price, double profit,
+                             double mfe = 0.0, double mae = 0.0, double adx = 0.0,
+                             double chop = 0.0, double atr_ratio = 0.0, bool is_low_vol = false)
 {
    string url  = backend_url + "/api/signals/local";
    string hdr  = "Content-Type: application/json\r\n";
    string pay  = StringFormat("{\"token\":\"%s\",\"id\":\"%s\",\"action\":\"%s\",\"symbol\":\"%s\","
                               "\"volume\":%s,\"entry_price\":%s,\"sl\":%s,\"tp\":%s,"
-                              "\"status\":\"%s\",\"ticket\":\"%s\",\"exit_price\":%s,\"profit\":%s}",
+                              "\"status\":\"%s\",\"ticket\":\"%s\",\"exit_price\":%s,\"profit\":%s,"
+                              "\"mfe\":%s,\"mae\":%s,\"adx\":%s,\"chop\":%s,\"atr_ratio\":%s,\"is_low_vol\":%s}",
                               auth_token, id, action, symbol,
                               DoubleToString(volume,2), DoubleToString(entry_price,2),
                               DoubleToString(sl,2), DoubleToString(tp,2),
                               status, IntegerToString(ticket),
-                              DoubleToString(exit_price,2), DoubleToString(profit,2));
+                              DoubleToString(exit_price,2), DoubleToString(profit,2),
+                              DoubleToString(mfe,5), DoubleToString(mae,5), DoubleToString(adx,2),
+                              DoubleToString(chop,2), DoubleToString(atr_ratio,3), is_low_vol ? "true" : "false");
    char pd[], rd[]; string rh;
    StringToCharArray(pay, pd, 0, StringLen(pay), CP_UTF8);
    ResetLastError();
@@ -280,14 +287,30 @@ void SyncPositionsWithBackend()
             }
          }
          string stat = (pf >= 0.0) ? "WIN" : "LOSS";
-         SendLocalTradeToBackend(IntegerToString(tk), tracked_positions[j].action,
+         string tk_str = IntegerToString(tk);
+         double mfe = 0.0, mae = 0.0, adx = 0.0, chop = 0.0, atr_ratio = 0.0;
+         bool low_vol = false;
+         
+         if(GlobalVariableCheck("ATS_MAX_PRICE_"+tk_str)) mfe = GlobalVariableGet("ATS_MAX_PRICE_"+tk_str);
+         if(GlobalVariableCheck("ATS_MIN_PRICE_"+tk_str)) mae = GlobalVariableGet("ATS_MIN_PRICE_"+tk_str);
+         if(GlobalVariableCheck("ATS_ADX_"+tk_str)) adx = GlobalVariableGet("ATS_ADX_"+tk_str);
+         if(GlobalVariableCheck("ATS_CHOP_"+tk_str)) chop = GlobalVariableGet("ATS_CHOP_"+tk_str);
+         if(GlobalVariableCheck("ATS_ATR_"+tk_str)) atr_ratio = GlobalVariableGet("ATS_ATR_"+tk_str);
+         if(GlobalVariableCheck("ATS_LOW_VOL_"+tk_str)) low_vol = true;
+
+         SendLocalTradeToBackend(tk_str, tracked_positions[j].action,
                                  tracked_positions[j].symbol, tracked_positions[j].volume,
                                  tracked_positions[j].open_price, tracked_positions[j].sl,
-                                 tracked_positions[j].tp, stat, tk, ep, pf);
-         string g1 = "ATS_MAX_PRICE_" + IntegerToString(tk);
-         string g2 = "ATS_MIN_PRICE_" + IntegerToString(tk);
-         if(GlobalVariableCheck(g1)) GlobalVariableDel(g1);
-         if(GlobalVariableCheck(g2)) GlobalVariableDel(g2);
+                                 tracked_positions[j].tp, stat, tk, ep, pf,
+                                 mfe, mae, adx, chop, atr_ratio, low_vol);
+
+         if(GlobalVariableCheck("ATS_MAX_PRICE_"+tk_str)) GlobalVariableDel("ATS_MAX_PRICE_"+tk_str);
+         if(GlobalVariableCheck("ATS_MIN_PRICE_"+tk_str)) GlobalVariableDel("ATS_MIN_PRICE_"+tk_str);
+         if(GlobalVariableCheck("ATS_ADX_"+tk_str)) GlobalVariableDel("ATS_ADX_"+tk_str);
+         if(GlobalVariableCheck("ATS_CHOP_"+tk_str)) GlobalVariableDel("ATS_CHOP_"+tk_str);
+         if(GlobalVariableCheck("ATS_ATR_"+tk_str)) GlobalVariableDel("ATS_ATR_"+tk_str);
+         if(GlobalVariableCheck("ATS_LOW_VOL_"+tk_str)) GlobalVariableDel("ATS_LOW_VOL_"+tk_str);
+         
          RemoveTrackedPosition(j);
       }
    }
@@ -439,75 +462,88 @@ bool IsInSessionString(datetime time_val, string session_str)
 {
    if(session_str == "") return false;
    
-   string time_part = session_str;
-   string days_part = "";
-   int colon_idx = StringFind(session_str, ":");
-   if(colon_idx != -1)
+   string session_blocks[];
+   int num_blocks = StringSplit(session_str, ';', session_blocks);
+   
+   for(int b = 0; b < num_blocks; b++)
    {
-      time_part = StringSubstr(session_str, 0, colon_idx);
-      days_part = StringSubstr(session_str, colon_idx + 1);
-   }
-   
-   MqlDateTime dt;
-   TimeToStruct(time_val, dt);
-   
-   if(days_part != "")
-   {
-      int pine_day = (dt.day_of_week == 0) ? 1 : (dt.day_of_week + 1);
-      string day_char = IntegerToString(pine_day);
-      if(StringFind(days_part, day_char) == -1)
-         return false;
-   }
-   
-   int current_time_mins = dt.hour * 60 + dt.min;
-   string ranges[];
-   int num_ranges = StringSplit(time_part, ',', ranges);
-   if(num_ranges <= 0) return false;
-   
-   for(int i = 0; i < num_ranges; i++)
-   {
-      string range = ranges[i];
-      StringTrimLeft(range);
-      StringTrimRight(range);
-      int dash_idx = StringFind(range, "-");
-      if(dash_idx == -1) continue;
-      
-      string start_str = StringSubstr(range, 0, dash_idx);
-      string end_str = StringSubstr(range, dash_idx + 1);
-      
-      int start_h = (int)StringToInteger(StringSubstr(start_str, 0, 2));
-      int start_m = (int)StringToInteger(StringSubstr(start_str, 2, 2));
-      int end_h = (int)StringToInteger(StringSubstr(end_str, 0, 2));
-      int end_m = (int)StringToInteger(StringSubstr(end_str, 2, 2));
-      
-      int start_mins = start_h * 60 + start_m;
-      int end_mins = end_h * 60 + end_m;
-      
-      if(start_mins <= end_mins)
-      {
-         if(current_time_mins >= start_mins && current_time_mins < end_mins)
-            return true;
-      }
-      else
-      {
-         if(current_time_mins >= start_mins || current_time_mins < end_mins)
-            return true;
-      }
+       string block_str = session_blocks[b];
+       StringTrimLeft(block_str);
+       StringTrimRight(block_str);
+       if(block_str == "") continue;
+       
+       string time_part = block_str;
+       string days_part = "";
+       int colon_idx = StringFind(block_str, ":");
+       if(colon_idx != -1)
+       {
+          time_part = StringSubstr(block_str, 0, colon_idx);
+          days_part = StringSubstr(block_str, colon_idx + 1);
+       }
+       
+       MqlDateTime dt;
+       TimeToStruct(time_val, dt);
+       
+       bool day_match = true;
+       if(days_part != "")
+       {
+          int pine_day = (dt.day_of_week == 0) ? 1 : (dt.day_of_week + 1);
+          string day_char = IntegerToString(pine_day);
+          if(StringFind(days_part, day_char) == -1)
+             day_match = false;
+       }
+       
+       if(!day_match) continue; // Skip if this block's days don't match
+       
+       int current_time_mins = dt.hour * 60 + dt.min;
+       string ranges[];
+       int num_ranges = StringSplit(time_part, ',', ranges);
+       if(num_ranges <= 0) continue;
+       
+       for(int i = 0; i < num_ranges; i++)
+       {
+          string range = ranges[i];
+          StringTrimLeft(range);
+          StringTrimRight(range);
+          int dash_idx = StringFind(range, "-");
+          if(dash_idx == -1) continue;
+          
+          string start_str = StringSubstr(range, 0, dash_idx);
+          string end_str = StringSubstr(range, dash_idx + 1);
+          
+          int start_h = (int)StringToInteger(StringSubstr(start_str, 0, 2));
+          int start_m = (int)StringToInteger(StringSubstr(start_str, 2, 2));
+          int end_h = (int)StringToInteger(StringSubstr(end_str, 0, 2));
+          int end_m = (int)StringToInteger(StringSubstr(end_str, 2, 2));
+          
+          int start_mins = start_h * 60 + start_m;
+          int end_mins = end_h * 60 + end_m;
+          
+          if(start_mins <= end_mins)
+          {
+             if(current_time_mins >= start_mins && current_time_mins < end_mins)
+                return true;
+          }
+          else
+          {
+             if(current_time_mins >= start_mins || current_time_mins < end_mins)
+                return true;
+          }
+       }
    }
    return false;
 }
 
 //+------------------------------------------------------------------+
-//| GetATRFilterOk: Check if volatility ratio is above threshold     |
+//| GetATRRatioValue: Calculate volatility ratio                     |
 //+------------------------------------------------------------------+
-bool GetATRFilterOk()
+double GetATRRatioValue()
 {
-   if(!InpUseATRFilter) return true;
-   if(atr_handle == INVALID_HANDLE) return true;
+   if(atr_handle == INVALID_HANDLE) return 1.0;
    double atr_buf[];
    ArrayResize(atr_buf, 50);
    ArraySetAsSeries(atr_buf, true);
-   if(CopyBuffer(atr_handle, 0, 1, 50, atr_buf) < 50) return true;
+   if(CopyBuffer(atr_handle, 0, 1, 50, atr_buf) < 50) return 1.0;
    
    double atr_14 = atr_buf[0];
    double sum = 0.0;
@@ -516,10 +552,9 @@ bool GetATRFilterOk()
    
    if(atr_sma_50 > 0)
    {
-      double atr_ratio = atr_14 / atr_sma_50;
-      return (atr_ratio >= InpATRMinRatio);
+      return atr_14 / atr_sma_50;
    }
-   return true;
+   return 1.0;
 }
 
 //+------------------------------------------------------------------+
@@ -1011,25 +1046,29 @@ void ExecuteStrategyLogic()
     
     // Sideway & Range Filters
     bool sideway_blocked = false;
+    double adx = 0.0;
     if(InpUseADXFilter)
     {
-       double adx = GetADXValue();
+       adx = GetADXValue();
        if(adx < InpADXMinThreshold)
        {
           sideway_blocked = true;
        }
     }
+    double chop = 0.0;
     if(!sideway_blocked && InpUseChopFilter)
     {
-       double chop = CalculateChoppiness(InpChopLen);
+       chop = CalculateChoppiness(InpChopLen);
        if(chop > InpChopMaxThreshold)
        {
           sideway_blocked = true;
        }
     }
+    double atr_ratio = 1.0;
     if(!sideway_blocked && InpUseATRFilter)
     {
-       if(!GetATRFilterOk())
+       atr_ratio = GetATRRatioValue();
+       if(atr_ratio < InpATRMinRatio)
        {
           sideway_blocked = true;
        }
@@ -1064,6 +1103,19 @@ void ExecuteStrategyLogic()
    double tp_v      = InpTPPips * pt;
    double sl_buffer = InpSLBuffer * pt;
 
+   bool is_low_vol = false;
+   if(InpUseAdaptiveBE)
+   {
+       long vol_arr[]; ArraySetAsSeries(vol_arr, true);
+       if(CopyTickVolume(Symbol(), Period(), 0, InpVolSmaLen, vol_arr) >= InpVolSmaLen)
+       {
+           double sum = 0;
+           for(int j = 0; j < InpVolSmaLen; j++) sum += (double)vol_arr[j];
+           double sma = sum / InpVolSmaLen;
+           if((double)vol_arr[0] < sma) is_low_vol = true;
+       }
+   }
+
    // 11. Execute BUY
    if(longCond)
    {
@@ -1082,7 +1134,15 @@ void ExecuteStrategyLogic()
          double a=tk.ask, atp=a+tp_v;
          Print("ATS EA: BUY | Ask=",a," SL=",slp," TP=",atp," Lot=",InpFixedLot,
                " Zone=",in_bull_fvg?"FVG":in_bull_ob?"OB":"PD");
-         trade.Buy(InpFixedLot, Symbol(), a, slp, atp, "ATS BUY[BOS+FVG/OB]");
+         if(trade.Buy(InpFixedLot, Symbol(), a, slp, atp, "ATS BUY[BOS+FVG/OB]"))
+         {
+             ulong order_tk = trade.ResultOrder();
+             string tk_str = IntegerToString(order_tk);
+             if(InpUseAdaptiveBE && is_low_vol) GlobalVariableSet("ATS_LOW_VOL_" + tk_str, 1.0);
+             GlobalVariableSet("ATS_ADX_" + tk_str, adx);
+             GlobalVariableSet("ATS_CHOP_" + tk_str, chop);
+             GlobalVariableSet("ATS_ATR_" + tk_str, atr_ratio);
+         }
       }
    }
    else if(shortCond)
@@ -1102,7 +1162,15 @@ void ExecuteStrategyLogic()
          double b=tk.bid, btp=b-tp_v;
          Print("ATS EA: SELL | Bid=",b," SL=",slp," TP=",btp," Lot=",InpFixedLot,
                " Zone=",in_bear_fvg?"FVG":in_bear_ob?"OB":"PD");
-         trade.Sell(InpFixedLot, Symbol(), b, slp, btp, "ATS SELL[BOS+FVG/OB]");
+         if(trade.Sell(InpFixedLot, Symbol(), b, slp, btp, "ATS SELL[BOS+FVG/OB]"))
+         {
+             ulong order_tk = trade.ResultOrder();
+             string tk_str = IntegerToString(order_tk);
+             if(InpUseAdaptiveBE && is_low_vol) GlobalVariableSet("ATS_LOW_VOL_" + tk_str, 1.0);
+             GlobalVariableSet("ATS_ADX_" + tk_str, adx);
+             GlobalVariableSet("ATS_CHOP_" + tk_str, chop);
+             GlobalVariableSet("ATS_ATR_" + tk_str, atr_ratio);
+         }
       }
    }
 }
@@ -1121,13 +1189,14 @@ void CheckBEAndTrailing()
       for(int k=n-1; k>=0; k--)
       {
          string gn=GlobalVariableName(k);
-         if(StringFind(gn,"ATS_MAX_PRICE_")==0||StringFind(gn,"ATS_MIN_PRICE_")==0)
+         if(StringFind(gn,"ATS_MAX_PRICE_")==0||StringFind(gn,"ATS_MIN_PRICE_")==0||StringFind(gn,"ATS_LOW_VOL_")==0||StringFind(gn,"ATS_ADX_")==0||StringFind(gn,"ATS_CHOP_")==0||StringFind(gn,"ATS_ATR_")==0)
             GlobalVariableDel(gn);
       }
       return;
    }
    double pt    = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
    double be_d  = InpBEPips * pt;
+   double be_d_low = InpBELowVolPips * pt;
    double t1_d  = InpTrailLevel1Pips * pt;
    double lk_d  = InpTrailLevel1LockPips * pt;
 
@@ -1149,6 +1218,9 @@ void CheckBEAndTrailing()
          double pk = GlobalVariableCheck(gk)?GlobalVariableGet(gk):ep;
          if(cur>pk) { pk=cur; GlobalVariableSet(gk,pk); }
          double pd = pk-ep;
+         double active_be_d = be_d;
+         if(InpUseAdaptiveBE && GlobalVariableCheck("ATS_LOW_VOL_"+IntegerToString(tk))) active_be_d = be_d_low;
+         
          if(pd>=t1_d)         // Level 2 Trailing Stop
          {
             double ls = ep + lk_d;
@@ -1160,7 +1232,7 @@ void CheckBEAndTrailing()
             }
             if(nsl<ls) { nsl=ls; mod=true; Print("ATS BUY #",tk," Trail SL=",nsl); }
          }
-         else if(pd>=be_d)    // Level 1: breakeven
+         else if(pd>=active_be_d)    // Level 1: breakeven
          {
             double be_locked = ep + (10 * pt);
             if(nsl<be_locked) { nsl=be_locked; mod=true; Print("ATS BUY #",tk," BE SL=",nsl); }
@@ -1173,6 +1245,9 @@ void CheckBEAndTrailing()
          double tr = GlobalVariableCheck(gk)?GlobalVariableGet(gk):ep;
          if(cur<tr) { tr=cur; GlobalVariableSet(gk,tr); }
          double pd = ep-tr;
+         double active_be_d = be_d;
+         if(InpUseAdaptiveBE && GlobalVariableCheck("ATS_LOW_VOL_"+IntegerToString(tk))) active_be_d = be_d_low;
+         
          if(pd>=t1_d)         // Level 2 Trailing Stop
          {
             double ls = ep - lk_d;
@@ -1184,7 +1259,7 @@ void CheckBEAndTrailing()
             }
             if(sl==0.0||nsl>ls) { nsl=ls; mod=true; Print("ATS SELL #",tk," Trail SL=",nsl); }
          }
-         else if(pd>=be_d)    // Level 1: breakeven
+         else if(pd>=active_be_d)    // Level 1: breakeven
          {
             double be_locked = ep - (10 * pt);
             if(sl==0.0||nsl>be_locked) { nsl=be_locked; mod=true; Print("ATS SELL #",tk," BE SL=",nsl); }

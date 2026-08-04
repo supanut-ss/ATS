@@ -1,7 +1,7 @@
 //@version=6
 strategy(
-     title = "XAUUSD ATR Quick Scalper v11 Soft Dynamic",
-     shorttitle = "Gold Quick Scalp v11",
+     title = "XAUUSD Value Area Pullback Scalper",
+     shorttitle = "Gold VA Scalp",
      overlay = true,
      initial_capital = 100000,
      currency = currency.USD,
@@ -21,215 +21,95 @@ strategy(
 // INPUTS
 // ──────────────────────────────────────────────────────────────
 
-string GROUP_ENTRY = "Entry"
-int fastLength = input.int(9, "Fast EMA", minval = 2, group = GROUP_ENTRY)
-int slowLength = input.int(21, "Slow EMA", minval = 3, group = GROUP_ENTRY)
-string entryMode = input.string("Crossover or pullback", "Entry mode", options = ["Crossover", "Pullback", "Crossover or pullback"], group = GROUP_ENTRY)
+string GROUP_ENTRY = "Entry & Value Area"
+int fastLength = input.int(21, "Fast EMA (Value Top)", minval = 2, group = GROUP_ENTRY)
+int slowLength = input.int(50, "Slow EMA (Value Bottom)", minval = 3, group = GROUP_ENTRY)
+int trendLength = input.int(200, "Macro Trend EMA", minval = 50, group = GROUP_ENTRY)
+int rsiLength = input.int(7, "RSI Length", minval = 2, group = GROUP_ENTRY)
+float rsiOversold = input.float(35, "RSI Oversold (Long exhaustion)", minval = 10, group = GROUP_ENTRY)
+float rsiOverbought = input.float(65, "RSI Overbought (Short exhaustion)", minval = 50, group = GROUP_ENTRY)
 float orderQuantity = input.float(1.0, "Order quantity", minval = 0.01, step = 0.01, group = GROUP_ENTRY)
-int cooldownBars = input.int(1, "Cooldown after exit (bars)", minval = 0, group = GROUP_ENTRY)
-float maxChasePips = input.float(120, "Maximum chase distance (pips)", minval = 0, step = 10, tooltip = "Rejects entries that close too far from the fast EMA. Set to 0 to disable.", group = GROUP_ENTRY)
-bool allowLong = input.bool(true, "Allow long", group = GROUP_ENTRY)
-bool allowShort = input.bool(true, "Allow short", group = GROUP_ENTRY)
-bool useVolumeConfirm = input.bool(false, "Require above-average volume", tooltip = "Entry requires volume > 1.0x SMA(volume). Filters out low-conviction signals.", group = GROUP_ENTRY)
-float volumeMultiplier = input.float(1.0, "Volume multiplier", minval = 0.5, step = 0.1, group = GROUP_ENTRY)
-int volumeLength = input.int(20, "Volume SMA length", minval = 5, group = GROUP_ENTRY)
 
-string GROUP_EXIT = "Exit — ATR-based (dynamic)"
-float pipSize = input.float(0.01, "Price per pip", minval = 0.00001, step = 0.01, tooltip = "For many XAUUSD feeds, 1 pip = 0.01 and 300 pips = $3.00. Confirm this with your broker.", group = GROUP_EXIT)
-string exitMode = input.string("ATR-based", "Exit mode", options = ["ATR-based", "Fixed pips"], tooltip = "ATR-based adjusts TP/SL to current volatility. Fixed pips uses static values.", group = GROUP_EXIT)
+string GROUP_EXIT = "Exit (ATR Dynamic)"
+float pipSize = input.float(0.01, "Price per pip", minval = 0.00001, step = 0.01, group = GROUP_EXIT)
 int exitAtrLength = input.int(14, "ATR length for exits", minval = 2, group = GROUP_EXIT)
-float slAtrMult = input.float(1.0, "Stop loss ATR multiplier", minval = 0.5, step = 0.1, tooltip = "SL = entry ± (ATR × this). Default 1.0 (tight for scalping).", group = GROUP_EXIT)
-float tpAtrMult = input.float(1.5, "Take profit ATR multiplier", minval = 0.5, step = 0.1, tooltip = "TP = entry ± (ATR × this). Default 1.5 → R:R ≈ 1:1.5 (quick scalp).", group = GROUP_EXIT)
-int fixedTpPips = input.int(450, "Fixed take profit (pips)", minval = 1, group = GROUP_EXIT)
-int fixedSlPips = input.int(300, "Fixed stop loss (pips)", minval = 1, group = GROUP_EXIT)
+float slAtrMult = input.float(1.5, "Stop loss ATR multiplier", minval = 0.5, step = 0.1, group = GROUP_EXIT)
+bool usePartialTP = input.bool(true, "Use partial take profit (50% at TP1)", group = GROUP_EXIT)
+float tp1AtrMult = input.float(1.5, "TP1 ATR multiplier", minval = 0.5, step = 0.1, group = GROUP_EXIT)
+float tp2AtrMult = input.float(3.0, "TP2 ATR multiplier", minval = 0.5, step = 0.1, group = GROUP_EXIT)
 
 string GROUP_TRAIL = "Trailing stop & Break-even"
-bool useBreakEven = input.bool(true, "Enable break-even", tooltip = "Moves SL to entry + buffer once price reaches the BE trigger distance.", group = GROUP_TRAIL)
-float beAtrMult = input.float(0.6, "Break-even trigger (ATR mult)", minval = 0.2, step = 0.1, tooltip = "Move SL to entry when profit reaches this × ATR.", group = GROUP_TRAIL)
-float beBufferPips = input.float(5, "Break-even buffer (pips)", minval = 0, step = 1, tooltip = "Pips beyond entry to place the break-even stop (covers spread).", group = GROUP_TRAIL)
-bool useTrailingStop = input.bool(true, "Enable trailing stop", tooltip = "After break-even is hit, trails SL behind price by trail offset.", group = GROUP_TRAIL)
-float trailAtrMult = input.float(0.7, "Trail offset (ATR mult)", minval = 0.2, step = 0.1, tooltip = "Distance behind price to trail the SL after break-even activates.", group = GROUP_TRAIL)
-bool useMaxHold = input.bool(true, "Enable maximum holding time", tooltip = "Closes positions that remain open too long. On M5, 12 bars is about 60 minutes.", group = GROUP_TRAIL)
-int maxHoldBars = input.int(12, "Maximum holding bars", minval = 2, group = GROUP_TRAIL)
-bool useQuickProfitExit = input.bool(true, "Enable quick-profit exit", tooltip = "After the minimum holding period, takes a smaller open profit instead of waiting only for the full target.", group = GROUP_TRAIL)
-int quickProfitMinBars = input.int(4, "Quick-profit minimum bars", minval = 1, group = GROUP_TRAIL)
-float quickProfitAtrMult = input.float(0.35, "Quick-profit trigger (ATR mult)", minval = 0.1, step = 0.05, group = GROUP_TRAIL)
-int counterTrendMaxHoldBars = input.int(8, "Counter-trend maximum bars", minval = 2, tooltip = "Soft dynamic mode exits counter-trend trades sooner.", group = GROUP_TRAIL)
-int counterTrendQuickMinBars = input.int(3, "Counter-trend quick-profit bars", minval = 1, group = GROUP_TRAIL)
-float counterTrendQuickAtrMult = input.float(0.25, "Counter-trend quick-profit ATR", minval = 0.1, step = 0.05, group = GROUP_TRAIL)
-int neutralMaxHoldBars = input.int(8, "H1-flat maximum bars", minval = 2, group = GROUP_TRAIL)
-float neutralQuickAtrMult = input.float(0.30, "H1-flat quick-profit ATR", minval = 0.1, step = 0.05, group = GROUP_TRAIL)
+bool useBreakEven = input.bool(true, "Enable break-even", group = GROUP_TRAIL)
+float beAtrMult = input.float(1.0, "Break-even trigger (ATR mult)", minval = 0.2, step = 0.1, group = GROUP_TRAIL)
+float beBufferPips = input.float(3, "Break-even buffer (pips)", minval = 0, step = 1, group = GROUP_TRAIL)
+bool useTrailingStop = input.bool(true, "Enable trailing stop", group = GROUP_TRAIL)
+float trailAtrMult = input.float(0.7, "Trail offset (ATR mult)", minval = 0.2, step = 0.1, group = GROUP_TRAIL)
 
-string GROUP_FILTER = "Quality filters"
-bool useTrendFilter = input.bool(true, "Use confirmed HTF trend", group = GROUP_FILTER)
-string trendTimeframe = input.timeframe("15", "Trend timeframe", group = GROUP_FILTER)
-bool useSlopeFilter = input.bool(false, "Use HTF EMA slope confirmation", tooltip = "Optional extra filter. Disabled by default because stacking it with the H1 regime removed profitable trades in the supplied sample.", group = GROUP_FILTER)
-int slopeLookback = input.int(3, "Slope lookback bars", minval = 1, group = GROUP_FILTER)
-bool useRegimeFilter = input.bool(false, "Use H1 market regime", tooltip = "Optional H1 direction filter. Disabled by default for the controlled v6 baseline.", group = GROUP_FILTER)
-string regimeTimeframe = input.timeframe("60", "Regime timeframe", group = GROUP_FILTER)
-int regimeEmaLength = input.int(50, "Regime EMA length", minval = 10, group = GROUP_FILTER)
-bool useAdaptiveRegime = input.bool(true, "Use adaptive market regime", tooltip = "Applies an additional quality gate according to the selected scope.", group = GROUP_FILTER)
-string adaptiveScope = input.string("Soft dynamic exits", "Adaptive mode", options = ["Soft dynamic exits", "Hard dynamic entries", "Both directions"], tooltip = "Soft mode preserves baseline entries, blocks volatility shocks, and adjusts exits by H1 alignment. Hard modes retain the stricter v10/v8 entry filters for comparison.", group = GROUP_FILTER)
-int efficiencyLength = input.int(12, "Market efficiency length", minval = 5, group = GROUP_FILTER)
-float minEfficiency = input.float(0.25, "Minimum trend efficiency", minval = 0.05, maxval = 0.8, step = 0.05, tooltip = "Higher values require cleaner directional movement and reduce trades.", group = GROUP_FILTER)
-float minEmaSeparationAtr = input.float(0.08, "Minimum HTF EMA separation (ATR)", minval = 0, step = 0.01, group = GROUP_FILTER)
-int atrBaselineLength = input.int(50, "ATR regime baseline length", minval = 20, group = GROUP_FILTER)
-float maxAtrExpansion = input.float(1.8, "Maximum ATR expansion", minval = 1.1, step = 0.1, tooltip = "Blocks fresh entries when ATR expands too far above its baseline.", group = GROUP_FILTER)
-bool useRsiFilter = input.bool(true, "Use RSI momentum", group = GROUP_FILTER)
-int rsiLength = input.int(14, "RSI length", minval = 2, group = GROUP_FILTER)
-float longRsiMin = input.float(40, "Long RSI minimum", minval = 25, maxval = 70, step = 0.5, group = GROUP_FILTER)
-float shortRsiMax = input.float(60, "Short RSI maximum", minval = 30, maxval = 75, step = 0.5, group = GROUP_FILTER)
-bool useAdxFilter = input.bool(true, "Use ADX trend-strength filter", group = GROUP_FILTER)
-int adxLength = input.int(14, "ADX length", minval = 2, group = GROUP_FILTER)
-float minAdx = input.float(15, "Minimum ADX", minval = 1, step = 1, group = GROUP_FILTER)
-bool useVolatilityFilter = input.bool(true, "Use ATR volatility filter", group = GROUP_FILTER)
-int volFilterAtrLen = input.int(14, "Volatility ATR length", minval = 2, group = GROUP_FILTER)
-float minAtrPips = input.float(20, "Minimum ATR (pips)", minval = 1, step = 10, tooltip = "Avoids markets too quiet to reach the target efficiently.", group = GROUP_FILTER)
-float maxAtrPips = input.float(500, "Maximum ATR (pips)", minval = 10, step = 10, tooltip = "Avoids extreme volatility where stops are too tight.", group = GROUP_FILTER)
-bool useSessionFilter = input.bool(false, "Use session filter", group = GROUP_FILTER)
-string tradeSession = input.session("0800-2300", "Trading session", tooltip = "Default covers London pre-open → NY close (Bangkok time).", group = GROUP_FILTER)
-string sessionTimezone = input.string("Asia/Bangkok", "Session timezone", group = GROUP_FILTER)
-
-string GROUP_GAP = "Gap protection"
-bool useDayGapProtection = input.bool(true, "Avoid daily market gap", tooltip = "Blocks entries around the daily metals break and closes open risk before the break.", group = GROUP_GAP)
-string dayGapBlockSession = input.session("1645-1810:23456", "Daily gap block window", tooltip = "New York time, Monday-Friday. Default covers the period shortly before the daily close through shortly after reopening.", group = GROUP_GAP)
-string dayGapCloseSession = input.session("1645-1700:23456", "Daily force-close window", tooltip = "New York time, Monday-Friday.", group = GROUP_GAP)
-bool useWeekendProtection = input.bool(true, "Avoid weekend gap", tooltip = "Blocks Friday entries near the weekly close and flattens open positions before the weekend.", group = GROUP_GAP)
-string gapTimezone = input.string("America/New_York", "Gap timezone", tooltip = "IANA timezone. America/New_York follows daylight-saving changes automatically.", group = GROUP_GAP)
+string GROUP_FILTER = "Protection"
+bool useVolumeConfirm = input.bool(true, "Require above-average volume", group = GROUP_FILTER)
+int volumeLength = input.int(20, "Volume SMA length", minval = 5, group = GROUP_FILTER)
+bool useDayGapProtection = input.bool(true, "Avoid daily market gap", group = GROUP_FILTER)
+string dayGapBlockSession = input.session("1645-1810:23456", "Daily gap block window", group = GROUP_FILTER)
+string dayGapCloseSession = input.session("1645-1700:23456", "Daily force-close window", group = GROUP_FILTER)
+bool useWeekendProtection = input.bool(true, "Avoid weekend gap", group = GROUP_FILTER)
+string gapTimezone = input.string("America/New_York", "Gap timezone", group = GROUP_FILTER)
 
 // ──────────────────────────────────────────────────────────────
 // INDICATORS
 // ──────────────────────────────────────────────────────────────
 
-float fastEma = ta.ema(close, fastLength)
-float slowEma = ta.ema(close, slowLength)
+float emaFast = ta.ema(close, fastLength)
+float emaSlow = ta.ema(close, slowLength)
+float emaMacro = ta.ema(close, trendLength)
 float rsiValue = ta.rsi(close, rsiLength)
 float exitAtr = ta.atr(exitAtrLength)
-float filterAtr = ta.atr(volFilterAtrLen)
-float atrBaseline = ta.sma(filterAtr, atrBaselineLength)
-[plusDi, minusDi, adxValue] = ta.dmi(adxLength, adxLength)
 float avgVolume = ta.sma(volume, volumeLength)
 float calculatedQuantity = math.max(orderQuantity, syminfo.mincontract)
-float directionalTravel = math.abs(close - close[efficiencyLength])
-float pathTravel = ta.sma(math.abs(ta.change(close)), efficiencyLength) * efficiencyLength
-float efficiencyRatio = pathTravel > 0 ? directionalTravel / pathTravel : 0
 
-// Dynamic TP/SL distances based on exit mode
-float targetDistance = exitMode == "ATR-based" ? math.max(exitAtr * tpAtrMult, syminfo.mintick) : math.max(fixedTpPips * pipSize, syminfo.mintick)
-float stopDistance = exitMode == "ATR-based" ? math.max(exitAtr * slAtrMult, syminfo.mintick) : math.max(fixedSlPips * pipSize, syminfo.mintick)
+// Dynamic distances
+float target1Distance = math.max(exitAtr * tp1AtrMult, syminfo.mintick)
+float target2Distance = math.max(exitAtr * tp2AtrMult, syminfo.mintick)
+float stopDistance = math.max(exitAtr * slAtrMult, syminfo.mintick)
 float beDistance = exitAtr * beAtrMult
 float trailOffset = exitAtr * trailAtrMult
 float beBuffer = beBufferPips * pipSize
 
-// [1] + lookahead_on returns the last confirmed HTF value consistently.
-float higherFast = request.security(syminfo.tickerid, trendTimeframe, ta.ema(close, fastLength)[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
-float higherSlow = request.security(syminfo.tickerid, trendTimeframe, ta.ema(close, slowLength)[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
-float higherFastPrev = request.security(syminfo.tickerid, trendTimeframe, ta.ema(close, fastLength)[slopeLookback + 1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
-float regimeClose = request.security(syminfo.tickerid, regimeTimeframe, close[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
-float regimeEma = request.security(syminfo.tickerid, regimeTimeframe, ta.ema(close, regimeEmaLength)[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
-float regimeEmaPrev = request.security(syminfo.tickerid, regimeTimeframe, ta.ema(close, regimeEmaLength)[2], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
-
-// ──────────────────────────────────────────────────────────────
-// ENTRY SIGNALS
-// ──────────────────────────────────────────────────────────────
-
-bool bullishTrend = fastEma > slowEma
-bool bearishTrend = fastEma < slowEma
-
-// Crossover signals
-bool crossoverLong = ta.crossover(fastEma, slowEma)
-bool crossoverShort = ta.crossunder(fastEma, slowEma)
-
-// Pullback signals — relaxed touch-zone approach:
-//   Long: price enters the zone within 0.5×ATR of fast EMA and closes bullish above it
-//   Short: mirror logic
-//   No strong-body requirement to allow more entries
-float pullbackZone = exitAtr * 0.5
-
-bool pullbackLong = bullishTrend and low <= fastEma + pullbackZone and close > fastEma and close > open
-bool pullbackShort = bearishTrend and high >= fastEma - pullbackZone and close < fastEma and close < open
-
-bool rawLong = entryMode == "Crossover" ? crossoverLong : entryMode == "Pullback" ? pullbackLong : crossoverLong or pullbackLong
-bool rawShort = entryMode == "Crossover" ? crossoverShort : entryMode == "Pullback" ? pullbackShort : crossoverShort or pullbackShort
-
-// ──────────────────────────────────────────────────────────────
-// QUALITY FILTERS
-// ──────────────────────────────────────────────────────────────
-
-// HTF trend alignment
-bool htfLongOk = not useTrendFilter or higherFast > higherSlow
-bool htfShortOk = not useTrendFilter or higherFast < higherSlow
-
-// HTF slope confirmation — trend is still accelerating
-bool slopeLongOk = not useSlopeFilter or (not na(higherFast) and not na(higherFastPrev) and higherFast > higherFastPrev)
-bool slopeShortOk = not useSlopeFilter or (not na(higherFast) and not na(higherFastPrev) and higherFast < higherFastPrev)
-
-// Adaptive higher-timeframe regime. Unlike a fixed short-only switch, this can flip with the market.
-bool regimeLongOk = not useRegimeFilter or (not na(regimeClose) and not na(regimeEma) and regimeClose > regimeEma)
-bool regimeShortOk = not useRegimeFilter or (not na(regimeClose) and not na(regimeEma) and regimeClose < regimeEma)
-
-// Adaptive regime: participate in clean trends in either direction, but do not
-// force trades in chop or during sudden volatility expansion.
-float htfEmaSeparationAtr = filterAtr > 0 ? math.abs(higherFast - higherSlow) / filterAtr : 0
-bool volatilityShock = not na(atrBaseline) and atrBaseline > 0 and filterAtr > atrBaseline * maxAtrExpansion
-bool adaptiveDataReady = not na(higherFast) and not na(higherSlow) and not na(higherFastPrev) and not na(directionalTravel) and not na(pathTravel) and not na(atrBaseline) and not na(efficiencyRatio) and not na(htfEmaSeparationAtr)
-bool adaptiveTrendReady = adaptiveDataReady and not volatilityShock and efficiencyRatio >= minEfficiency and htfEmaSeparationAtr >= minEmaSeparationAtr
-bool h1TrendDataReady = not na(regimeClose) and not na(regimeEma) and not na(regimeEmaPrev)
-bool h1BullTrend = h1TrendDataReady and regimeClose > regimeEma and regimeEma > regimeEmaPrev
-bool h1BearTrend = h1TrendDataReady and regimeClose < regimeEma and regimeEma < regimeEmaPrev
-bool softDynamicMode = useAdaptiveRegime and adaptiveScope == "Soft dynamic exits"
-bool dynamicScope = adaptiveScope == "Hard dynamic entries"
-bool adaptiveAppliesLong = useAdaptiveRegime and (adaptiveScope == "Both directions" or (dynamicScope and not h1BullTrend))
-bool adaptiveAppliesShort = useAdaptiveRegime and (adaptiveScope == "Both directions" or (dynamicScope and not h1BearTrend))
-bool adaptiveLongOk = softDynamicMode ? not volatilityShock : not adaptiveAppliesLong or (adaptiveTrendReady and higherFast > higherSlow and higherFast > higherFastPrev)
-bool adaptiveShortOk = softDynamicMode ? not volatilityShock : not adaptiveAppliesShort or (adaptiveTrendReady and higherFast < higherSlow and higherFast < higherFastPrev)
-string h1TrendLabel = h1BullTrend ? "H1 UP" : h1BearTrend ? "H1 DOWN" : "H1 FLAT"
-string marketRegime = volatilityShock ? "SHOCK" : not adaptiveDataReady ? "WARMUP" : efficiencyRatio < minEfficiency ? "CHOP" : adaptiveTrendReady ? "TREND" : "WEAK"
-
-// RSI momentum (relaxed boundaries to allow pullback entries)
-bool rsiLongOk = not useRsiFilter or rsiValue >= longRsiMin
-bool rsiShortOk = not useRsiFilter or rsiValue <= shortRsiMax
-
-// ADX trend strength with directional confirmation
-bool adxLongOk = not useAdxFilter or (adxValue >= minAdx and plusDi > minusDi)
-bool adxShortOk = not useAdxFilter or (adxValue >= minAdx and minusDi > plusDi)
-
-// ATR volatility — using absolute pips instead of ratio for clarity
-float filterAtrPips = filterAtr / pipSize
-bool volatilityOk = not useVolatilityFilter or (filterAtrPips >= minAtrPips and filterAtrPips <= maxAtrPips)
-
-// Session filter
-bool sessionOk = not useSessionFilter or not na(time(timeframe.period, tradeSession, sessionTimezone))
-
-// Pepperstone metals pause around the New York close. Use an IANA timezone so DST
-// changes do not require manual conversion to Bangkok or broker server time.
+// Gap protections
 bool dayGapEntryBlocked = useDayGapProtection and not na(time(timeframe.period, dayGapBlockSession, gapTimezone))
 bool dayGapForceClose = useDayGapProtection and not na(time(timeframe.period, dayGapCloseSession, gapTimezone))
 bool weekendEntryBlocked = useWeekendProtection and not na(time(timeframe.period, "1630-2359:6", gapTimezone))
 bool weekendForceClose = useWeekendProtection and not na(time(timeframe.period, "1645-1700:6", gapTimezone))
 bool gapEntryBlocked = dayGapEntryBlocked or weekendEntryBlocked
 
-// Chase distance filter
-bool chaseLongOk = maxChasePips == 0 or math.max(close - fastEma, 0) <= maxChasePips * pipSize
-bool chaseShortOk = maxChasePips == 0 or math.max(fastEma - close, 0) <= maxChasePips * pipSize
-
-// Volume confirmation
-bool volumeOk = not useVolumeConfirm or (not na(avgVolume) and avgVolume > 0 and volume >= avgVolume * volumeMultiplier)
-
 // ──────────────────────────────────────────────────────────────
-// COOLDOWN & SIGNAL
+// VALUE AREA & EXHAUSTION LOGIC
 // ──────────────────────────────────────────────────────────────
 
-var int lastExitBar = na
-bool tradeJustClosed = strategy.closedtrades > nz(strategy.closedtrades[1])
-if tradeJustClosed
-    lastExitBar := bar_index
+bool macroBullish = close > emaMacro and emaFast > emaMacro
+bool macroBearish = close < emaMacro and emaFast < emaMacro
 
-bool cooldownOk = na(lastExitBar) or bar_index - lastExitBar > cooldownBars
+// Check if price pulled back into Value Area (between Fast and Slow EMA)
+bool insideValueAreaLong = low <= emaFast and close >= emaSlow
+bool insideValueAreaShort = high >= emaFast and close <= emaSlow
+
+// Check Exhaustion
+// RSI must have dipped below oversold within the last 5 bars during the pullback
+bool rsiExhaustionLong = ta.lowest(rsiValue, 5) <= rsiOversold
+bool rsiExhaustionShort = ta.highest(rsiValue, 5) >= rsiOverbought
+
+// Price Action Trigger: Rejection of value area bottom and closing above fast EMA
+bool bullTrigger = close > emaFast and close > open
+bool bearTrigger = close < emaFast and close < open
+
+bool volumeOk = not useVolumeConfirm or (volume > avgVolume)
+
+// ──────────────────────────────────────────────────────────────
+// ENTRY SIGNALS
+// ──────────────────────────────────────────────────────────────
+
 bool flat = strategy.position_size == 0
-
-bool longSignal = barstate.isconfirmed and flat and cooldownOk and not gapEntryBlocked and allowLong and rawLong and htfLongOk and slopeLongOk and regimeLongOk and adaptiveLongOk and rsiLongOk and adxLongOk and volatilityOk and sessionOk and chaseLongOk and volumeOk
-bool shortSignal = barstate.isconfirmed and flat and cooldownOk and not gapEntryBlocked and allowShort and rawShort and htfShortOk and slopeShortOk and regimeShortOk and adaptiveShortOk and rsiShortOk and adxShortOk and volatilityOk and sessionOk and chaseShortOk and volumeOk
+bool longSignal = barstate.isconfirmed and flat and not gapEntryBlocked and macroBullish and insideValueAreaLong and rsiExhaustionLong and bullTrigger and volumeOk
+bool shortSignal = barstate.isconfirmed and flat and not gapEntryBlocked and macroBearish and insideValueAreaShort and rsiExhaustionShort and bearTrigger and volumeOk
 
 if longSignal
     strategy.entry("Long", strategy.long, qty = calculatedQuantity, alert_message = "XAUUSD LONG")
@@ -237,18 +117,14 @@ if shortSignal
     strategy.entry("Short", strategy.short, qty = calculatedQuantity, alert_message = "XAUUSD SHORT")
 
 // ──────────────────────────────────────────────────────────────
-// EXIT MANAGEMENT: TP/SL + Break-even + Trailing
+// EXIT MANAGEMENT
 // ──────────────────────────────────────────────────────────────
 
 var float activeStop = na
 var float activeTarget = na
+var float activeTarget2 = na
 var float entryPrice = na
 var bool breakEvenHit = false
-var int entryBar = na
-var float quickProfitDistance = na
-var int activeQuickProfitMinBars = na
-var int activeMaxHoldBars = na
-var string activeTradeRegime = ""
 
 bool newLong = strategy.position_size > 0 and strategy.position_size[1] <= 0
 bool newShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
@@ -256,31 +132,18 @@ bool newShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
 if newLong
     entryPrice := strategy.position_avg_price
     activeStop := math.round_to_mintick(entryPrice - stopDistance)
-    activeTarget := math.round_to_mintick(entryPrice + targetDistance)
+    activeTarget := math.round_to_mintick(entryPrice + target1Distance)
+    activeTarget2 := math.round_to_mintick(entryPrice + target2Distance)
     breakEvenHit := false
-    entryBar := bar_index
-    bool alignedTrade = h1BullTrend
-    bool counterTrendTrade = h1BearTrend
-    float selectedQuickAtr = softDynamicMode ? alignedTrade ? quickProfitAtrMult : counterTrendTrade ? counterTrendQuickAtrMult : neutralQuickAtrMult : quickProfitAtrMult
-    quickProfitDistance := math.max(exitAtr * selectedQuickAtr, syminfo.mintick)
-    activeQuickProfitMinBars := softDynamicMode and counterTrendTrade ? counterTrendQuickMinBars : quickProfitMinBars
-    activeMaxHoldBars := softDynamicMode ? alignedTrade ? maxHoldBars : counterTrendTrade ? counterTrendMaxHoldBars : neutralMaxHoldBars : maxHoldBars
-    activeTradeRegime := alignedTrade ? "ALIGNED" : counterTrendTrade ? "COUNTER" : "H1 FLAT"
+
 if newShort
     entryPrice := strategy.position_avg_price
     activeStop := math.round_to_mintick(entryPrice + stopDistance)
-    activeTarget := math.round_to_mintick(entryPrice - targetDistance)
+    activeTarget := math.round_to_mintick(entryPrice - target1Distance)
+    activeTarget2 := math.round_to_mintick(entryPrice - target2Distance)
     breakEvenHit := false
-    entryBar := bar_index
-    bool alignedTrade = h1BearTrend
-    bool counterTrendTrade = h1BullTrend
-    float selectedQuickAtr = softDynamicMode ? alignedTrade ? quickProfitAtrMult : counterTrendTrade ? counterTrendQuickAtrMult : neutralQuickAtrMult : quickProfitAtrMult
-    quickProfitDistance := math.max(exitAtr * selectedQuickAtr, syminfo.mintick)
-    activeQuickProfitMinBars := softDynamicMode and counterTrendTrade ? counterTrendQuickMinBars : quickProfitMinBars
-    activeMaxHoldBars := softDynamicMode ? alignedTrade ? maxHoldBars : counterTrendTrade ? counterTrendMaxHoldBars : neutralMaxHoldBars : maxHoldBars
-    activeTradeRegime := alignedTrade ? "ALIGNED" : counterTrendTrade ? "COUNTER" : "H1 FLAT"
 
-// Break-even logic: move SL to entry + buffer once profit reaches beDistance
+// Break-even
 if strategy.position_size > 0 and useBreakEven and not breakEvenHit and not na(entryPrice)
     if close >= entryPrice + beDistance
         activeStop := math.round_to_mintick(entryPrice + beBuffer)
@@ -290,7 +153,7 @@ if strategy.position_size < 0 and useBreakEven and not breakEvenHit and not na(e
         activeStop := math.round_to_mintick(entryPrice - beBuffer)
         breakEvenHit := true
 
-// Trailing stop logic: after BE, trail SL behind price
+// Trailing stop
 if strategy.position_size > 0 and useTrailingStop and breakEvenHit and not na(activeStop)
     float newTrailStop = math.round_to_mintick(close - trailOffset)
     if newTrailStop > activeStop
@@ -300,111 +163,73 @@ if strategy.position_size < 0 and useTrailingStop and breakEvenHit and not na(ac
     if newTrailStop < activeStop
         activeStop := newTrailStop
 
-// Quick-profit and time exits keep the strategy focused on short-duration trades.
-bool quickProfitReady = useQuickProfitExit and strategy.position_size != 0 and not na(entryBar) and not na(entryPrice) and not na(quickProfitDistance) and not na(activeQuickProfitMinBars) and bar_index - entryBar >= activeQuickProfitMinBars
-bool quickLongProfit = quickProfitReady and strategy.position_size > 0 and close >= entryPrice + quickProfitDistance
-bool quickShortProfit = quickProfitReady and strategy.position_size < 0 and close <= entryPrice - quickProfitDistance
-bool quickProfitExit = quickLongProfit or quickShortProfit
-bool maxHoldExit = useMaxHold and strategy.position_size != 0 and not na(entryBar) and not na(activeMaxHoldBars) and bar_index - entryBar >= activeMaxHoldBars
 bool gapForceClose = strategy.position_size != 0 and (weekendForceClose or dayGapForceClose)
-bool forceMarketExit = quickProfitExit or maxHoldExit or gapForceClose
 
-if forceMarketExit
-    string exitComment = weekendForceClose ? "WEEKEND EXIT" : dayGapForceClose ? "DAY GAP EXIT" : quickProfitExit ? "QUICK PROFIT" : "TIME EXIT"
-    string exitAlert = weekendForceClose ? "XAUUSD WEEKEND EXIT" : dayGapForceClose ? "XAUUSD DAY GAP EXIT" : quickProfitExit ? "XAUUSD QUICK PROFIT" : "XAUUSD TIME EXIT"
-    strategy.close_all(comment = exitComment, alert_message = exitAlert)
+if gapForceClose
+    string exitComment = weekendForceClose ? "WEEKEND EXIT" : "DAY GAP EXIT"
+    strategy.close_all(comment = exitComment, alert_message = exitComment)
 
-// Place bracket exits only when no market exit is pending.
-if not forceMarketExit and strategy.position_size > 0 and not na(activeStop) and not na(activeTarget)
-    strategy.exit("Long exit", "Long", stop = activeStop, limit = activeTarget, alert_message = "XAUUSD LONG EXIT")
-if not forceMarketExit and strategy.position_size < 0 and not na(activeStop) and not na(activeTarget)
-    strategy.exit("Short exit", "Short", stop = activeStop, limit = activeTarget, alert_message = "XAUUSD SHORT EXIT")
+if not gapForceClose and strategy.position_size > 0 and not na(activeStop) and not na(activeTarget)
+    if usePartialTP
+        strategy.exit("TP1 Long", "Long", qty_percent = 50, stop = activeStop, limit = activeTarget, alert_message = "LONG TP1")
+        strategy.exit("TP2 Long", "Long", stop = activeStop, limit = activeTarget2, alert_message = "LONG TP2")
+    else
+        strategy.exit("Long exit", "Long", stop = activeStop, limit = activeTarget, alert_message = "LONG EXIT")
 
-// Reset on flat
+if not gapForceClose and strategy.position_size < 0 and not na(activeStop) and not na(activeTarget)
+    if usePartialTP
+        strategy.exit("TP1 Short", "Short", qty_percent = 50, stop = activeStop, limit = activeTarget, alert_message = "SHORT TP1")
+        strategy.exit("TP2 Short", "Short", stop = activeStop, limit = activeTarget2, alert_message = "SHORT TP2")
+    else
+        strategy.exit("Short exit", "Short", stop = activeStop, limit = activeTarget, alert_message = "SHORT EXIT")
+
 if strategy.position_size == 0 and strategy.position_size[1] != 0
     activeStop := na
     activeTarget := na
+    activeTarget2 := na
     entryPrice := na
     breakEvenHit := false
-    entryBar := na
-    quickProfitDistance := na
-    activeQuickProfitMinBars := na
-    activeMaxHoldBars := na
-    activeTradeRegime := ""
 
 // ──────────────────────────────────────────────────────────────
-// PLOTS
+// PLOTS & DASHBOARD
 // ──────────────────────────────────────────────────────────────
 
-plot(fastEma, "Fast EMA", color = color.orange, linewidth = 2)
-plot(slowEma, "Slow EMA", color = color.blue, linewidth = 2)
+plot(emaFast, "Fast EMA", color = color.orange, linewidth = 2)
+plot(emaSlow, "Slow EMA", color = color.blue, linewidth = 2)
+plot(emaMacro, "Macro Trend EMA 200", color = color.new(color.white, 50), linewidth = 2)
+
 plot(strategy.position_size != 0 ? activeStop : na, "Stop loss", color = color.red, style = plot.style_linebr, linewidth = 2)
-plot(strategy.position_size != 0 ? activeTarget : na, "Take profit", color = color.lime, style = plot.style_linebr, linewidth = 2)
+plot(strategy.position_size != 0 ? activeTarget : na, "TP1", color = color.lime, style = plot.style_linebr, linewidth = 2)
+plot(strategy.position_size != 0 ? activeTarget2 : na, "TP2", color = color.green, style = plot.style_linebr, linewidth = 2)
 plot(strategy.position_size != 0 and breakEvenHit ? entryPrice : na, "Entry (BE active)", color = color.new(color.yellow, 40), style = plot.style_linebr, linewidth = 1)
 plotshape(longSignal, "Long entry", shape.triangleup, location.belowbar, color.lime, size = size.tiny, text = "BUY")
 plotshape(shortSignal, "Short entry", shape.triangledown, location.abovebar, color.red, size = size.tiny, text = "SELL")
-bgcolor(useSessionFilter and not sessionOk ? color.new(color.gray, 94) : na, title = "Outside session")
 
-// ──────────────────────────────────────────────────────────────
-// DASHBOARD
-// ──────────────────────────────────────────────────────────────
-
-var table status = table.new(position.top_right, 2, 12, border_width = 1)
+var table status = table.new(position.top_right, 2, 7, border_width = 1)
 if barstate.islast
-    // Compute stats
     int totalTrades = strategy.closedtrades
     int wins = strategy.wintrades
     float winRate = totalTrades > 0 ? wins / totalTrades * 100 : 0
     float profitFactor = strategy.grossloss != 0 ? math.abs(strategy.grossprofit / strategy.grossloss) : 0
-    float rrRatio = stopDistance > 0 ? targetDistance / stopDistance : 0
 
-    // Header
     color headerBg = strategy.netprofit >= 0 ? color.new(#00897B, 15) : color.new(#E53935, 15)
-    table.cell(status, 0, 0, "QUICK SCALP v11", bgcolor = color.new(#1565C0, 15), text_color = color.white, text_size = size.small)
-    table.cell(status, 1, 0, exitMode == "ATR-based" ? "ATR MODE" : "FIXED MODE", bgcolor = headerBg, text_color = color.white, text_size = size.small)
+    table.cell(status, 0, 0, "VA PULLBACK SCALP", bgcolor = color.new(#1565C0, 15), text_color = color.white, text_size = size.small)
+    table.cell(status, 1, 0, macroBullish ? "UPTREND" : macroBearish ? "DOWNTREND" : "FLAT", bgcolor = headerBg, text_color = color.white, text_size = size.small)
 
-    // Row 1: Exit mode & R:R
-    table.cell(status, 0, 1, "R:R RATIO", text_size = size.tiny)
-    table.cell(status, 1, 1, "1 : " + str.tostring(rrRatio, "#.##"), text_size = size.tiny, text_color = rrRatio >= 1.5 ? color.green : color.red)
+    table.cell(status, 0, 1, "RSI (7)", text_size = size.tiny)
+    table.cell(status, 1, 1, str.tostring(rsiValue, "#.0"), text_size = size.tiny, text_color = rsiValue < rsiOversold ? color.lime : rsiValue > rsiOverbought ? color.red : color.white)
 
-    // Row 2: TP / SL in price terms
-    table.cell(status, 0, 2, "TP / SL ($)", text_size = size.tiny)
-    table.cell(status, 1, 2, str.tostring(targetDistance, "#.##") + " / " + str.tostring(stopDistance, "#.##"), text_size = size.tiny)
+    table.cell(status, 0, 2, "ATR (pips)", text_size = size.tiny)
+    table.cell(status, 1, 2, str.tostring(exitAtr / pipSize, "#.0"), text_size = size.tiny)
 
-    // Row 3: TP / SL in pips
-    table.cell(status, 0, 3, "TP / SL (pips)", text_size = size.tiny)
-    table.cell(status, 1, 3, str.tostring(targetDistance / pipSize, "#") + " / " + str.tostring(stopDistance / pipSize, "#"), text_size = size.tiny)
+    table.cell(status, 0, 3, "CLOSED TRADES", text_size = size.tiny)
+    table.cell(status, 1, 3, str.tostring(totalTrades), text_size = size.tiny)
 
-    // Row 4: ATR
-    table.cell(status, 0, 4, "ATR (pips)", text_size = size.tiny)
-    table.cell(status, 1, 4, str.tostring(exitAtr / pipSize, "#.0"), text_size = size.tiny)
+    table.cell(status, 0, 4, "WIN RATE", text_size = size.tiny)
+    table.cell(status, 1, 4, str.tostring(winRate, "#.1") + "%", text_size = size.tiny, text_color = winRate >= 45 ? color.green : color.red)
 
-    // Row 5: RSI / ADX
-    table.cell(status, 0, 5, "RSI / ADX", text_size = size.tiny)
-    table.cell(status, 1, 5, str.tostring(rsiValue, "#.0") + " / " + str.tostring(adxValue, "#.0"), text_size = size.tiny)
+    table.cell(status, 0, 5, "PROFIT FACTOR", text_size = size.tiny)
+    table.cell(status, 1, 5, str.tostring(profitFactor, "#.##"), text_size = size.tiny, text_color = profitFactor >= 1.3 ? color.green : color.red)
 
-    // Row 6: Dynamic market regime
-    color regimeColor = marketRegime == "TREND" ? color.green : marketRegime == "SHOCK" ? color.red : color.orange
-    table.cell(status, 0, 6, "H1 / REGIME", text_size = size.tiny)
-    string displayedRegime = strategy.position_size != 0 and activeTradeRegime != "" ? activeTradeRegime : marketRegime
-    table.cell(status, 1, 6, h1TrendLabel + " / " + displayedRegime, text_size = size.tiny, text_color = regimeColor)
-
-    // Row 7: Total trades
-    table.cell(status, 0, 7, "CLOSED TRADES", text_size = size.tiny)
-    table.cell(status, 1, 7, str.tostring(totalTrades), text_size = size.tiny)
-
-    // Row 8: Win rate
-    table.cell(status, 0, 8, "WIN RATE", text_size = size.tiny)
-    table.cell(status, 1, 8, str.tostring(winRate, "#.1") + "%", text_size = size.tiny, text_color = winRate >= 45 ? color.green : color.red)
-
-    // Row 9: Profit factor
-    table.cell(status, 0, 9, "PROFIT FACTOR", text_size = size.tiny)
-    table.cell(status, 1, 9, str.tostring(profitFactor, "#.##"), text_size = size.tiny, text_color = profitFactor >= 1.3 ? color.green : color.red)
-
-    // Row 10: Net profit
-    table.cell(status, 0, 10, "NET PROFIT", text_size = size.tiny)
-    table.cell(status, 1, 10, "$" + str.tostring(strategy.netprofit, "#,###.##"), text_size = size.tiny, text_color = strategy.netprofit >= 0 ? color.green : color.red)
-
-    // Row 11: Order quantity
-    table.cell(status, 0, 11, "ORDER QTY", text_size = size.tiny)
-    table.cell(status, 1, 11, str.tostring(calculatedQuantity), text_size = size.tiny)
+    table.cell(status, 0, 6, "NET PROFIT", text_size = size.tiny)
+    table.cell(status, 1, 6, "$" + str.tostring(strategy.netprofit, "#,###.##"), text_size = size.tiny, text_color = strategy.netprofit >= 0 ? color.green : color.red)

@@ -92,3 +92,37 @@ CREATE TABLE IF NOT EXISTS `demo_account_snapshots` (
     `positions_json` TEXT     NULL,
     PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `trade_analytics` (
+    `ticket`       VARCHAR(30)  NOT NULL,
+    `symbol`       VARCHAR(20)  NOT NULL,
+    `action`       VARCHAR(10)  NOT NULL,
+    `entry_price`  DOUBLE       NOT NULL DEFAULT 0,
+    `exit_price`   DOUBLE       NOT NULL DEFAULT 0,
+    `profit`       DOUBLE       NOT NULL DEFAULT 0,
+    `mfe`          DOUBLE       NOT NULL DEFAULT 0,
+    `mae`          DOUBLE       NOT NULL DEFAULT 0,
+    `adx`          DOUBLE       NOT NULL DEFAULT 0,
+    `chop`         DOUBLE       NOT NULL DEFAULT 0,
+    `atr_ratio`    DOUBLE       NOT NULL DEFAULT 0,
+    `is_low_vol`   BOOLEAN      NOT NULL DEFAULT FALSE,
+    `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`ticket`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `demo_trade_analytics` (
+    `ticket`       VARCHAR(30)  NOT NULL,
+    `symbol`       VARCHAR(20)  NOT NULL,
+    `action`       VARCHAR(10)  NOT NULL,
+    `entry_price`  DOUBLE       NOT NULL DEFAULT 0,
+    `exit_price`   DOUBLE       NOT NULL DEFAULT 0,
+    `profit`       DOUBLE       NOT NULL DEFAULT 0,
+    `mfe`          DOUBLE       NOT NULL DEFAULT 0,
+    `mae`          DOUBLE       NOT NULL DEFAULT 0,
+    `adx`          DOUBLE       NOT NULL DEFAULT 0,
+    `chop`         DOUBLE       NOT NULL DEFAULT 0,
+    `atr_ratio`    DOUBLE       NOT NULL DEFAULT 0,
+    `is_low_vol`   BOOLEAN      NOT NULL DEFAULT FALSE,
+    `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`ticket`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

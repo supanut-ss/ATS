@@ -341,6 +341,15 @@ app.MapPost("/api/signals/local", async ([FromBody] LocalTradePayload payload) =
     await db.AddLogAsync($"LOCAL_{signal.Status}", JsonSerializer.Serialize(payload),
                           JsonSerializer.Serialize(new { ok = true, message = $"Local signal upserted as {signal.Status}" }));
 
+    if (signal.Status == "WIN" || signal.Status == "LOSS")
+    {
+        try {
+            await db.InsertTradeAnalyticsAsync(payload);
+        } catch (Exception ex) {
+            Console.WriteLine($"[MySQL] InsertTradeAnalytics error: {ex.Message}");
+        }
+    }
+
     return Results.Ok(new { ok = true, message = $"Local signal upserted as {signal.Status}" });
 });
 
@@ -631,6 +640,8 @@ public sealed class DbRouter
     public Task AddAccountSnapshotAsync(double balance, double equity, double freeMargin,
         double bid, double ask, int openPositions, string positionsJson) =>
         Current.AddAccountSnapshotAsync(balance, equity, freeMargin, bid, ask, openPositions, positionsJson);
+    public Task InsertTradeAnalyticsAsync(LocalTradePayload payload) =>
+        Current.InsertTradeAnalyticsAsync(payload);
 }
 
 public sealed class TradingRuntimeRouter
@@ -773,6 +784,34 @@ ON DUPLICATE KEY UPDATE
         cmd.Parameters.AddWithValue("@ticket",      s.Ticket);
         cmd.Parameters.AddWithValue("@status",      s.Status);
         cmd.Parameters.AddWithValue("@comment",     s.Comment);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    // ── Insert Trade Analytics (Phase 1 ML) ───────────────────────────
+    public async Task InsertTradeAnalyticsAsync(LocalTradePayload p)
+    {
+        string table = _signalsTable.StartsWith("demo_") ? "demo_trade_analytics" : "trade_analytics";
+        await using var conn = Open();
+        await conn.OpenAsync();
+        var sql = $@"
+INSERT INTO `{table}` 
+(ticket, symbol, action, entry_price, exit_price, profit, mfe, mae, adx, chop, atr_ratio, is_low_vol)
+VALUES (@ticket, @symbol, @action, @entry_price, @exit_price, @profit, @mfe, @mae, @adx, @chop, @atr_ratio, @is_low_vol)
+ON DUPLICATE KEY UPDATE 
+    exit_price=VALUES(exit_price), profit=VALUES(profit), mfe=VALUES(mfe), mae=VALUES(mae)";
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@ticket", p.Ticket);
+        cmd.Parameters.AddWithValue("@symbol", p.Symbol);
+        cmd.Parameters.AddWithValue("@action", p.Action);
+        cmd.Parameters.AddWithValue("@entry_price", p.EntryPrice);
+        cmd.Parameters.AddWithValue("@exit_price", p.ExitPrice);
+        cmd.Parameters.AddWithValue("@profit", p.Profit);
+        cmd.Parameters.AddWithValue("@mfe", p.Mfe);
+        cmd.Parameters.AddWithValue("@mae", p.Mae);
+        cmd.Parameters.AddWithValue("@adx", p.Adx);
+        cmd.Parameters.AddWithValue("@chop", p.Chop);
+        cmd.Parameters.AddWithValue("@atr_ratio", p.AtrRatio);
+        cmd.Parameters.AddWithValue("@is_low_vol", p.IsLowVol);
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -1079,4 +1118,10 @@ public class LocalTradePayload
     [JsonPropertyName("ticket")]      public string Ticket { get; set; } = string.Empty;
     [JsonPropertyName("exit_price")]  public double ExitPrice { get; set; }
     [JsonPropertyName("profit")]      public double Profit { get; set; }
+    [JsonPropertyName("mfe")]         public double Mfe { get; set; }
+    [JsonPropertyName("mae")]         public double Mae { get; set; }
+    [JsonPropertyName("adx")]         public double Adx { get; set; }
+    [JsonPropertyName("chop")]        public double Chop { get; set; }
+    [JsonPropertyName("atr_ratio")]   public double AtrRatio { get; set; }
+    [JsonPropertyName("is_low_vol")]  public bool IsLowVol { get; set; }
 }
