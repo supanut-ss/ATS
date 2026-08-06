@@ -5,7 +5,7 @@ import {
 } from '@mui/material';
 import {
   ShowChart, CheckCircle, HourglassEmpty,
-  TrendingUp, TrendingDown, Toll, DeleteSweep,
+  TrendingUp, TrendingDown, Toll, DeleteSweep, AccountBalanceWallet,
 } from '@mui/icons-material';
 import { productionApi } from '../services/api';
 
@@ -51,7 +51,7 @@ function StatCard({ label, value, color, icon, subtitle }) {
   );
 }
 
-export default function SignalsTracker({ signals, loading, onRefresh, apiClient = productionApi, actionsDisabled = false }) {
+export default function SignalsTracker({ signals, loading, onRefresh, apiClient = productionApi, actionsDisabled = false, initialCapital = 300 }) {
   const [clearing, setClearing] = useState(false);
 
   const handleClear = async () => {
@@ -118,6 +118,15 @@ export default function SignalsTracker({ signals, loading, onRefresh, apiClient 
         gap: 2,
         mb: 3,
       }}>
+        <Box sx={{ flex: { xs: '1 1 calc(50% - 8px)', md: '1 1 0' }, minWidth: { xs: 140, md: 0 } }}>
+          <StatCard
+            label="ต้นทุนจริง"
+            value={`$${fmt(initialCapital)}`}
+            color="#38bdf8"
+            icon={<AccountBalanceWallet />}
+            subtitle="Initial Capital ($300)"
+          />
+        </Box>
         <Box sx={{ flex: { xs: '1 1 calc(50% - 8px)', md: '1 1 0' }, minWidth: { xs: 140, md: 0 } }}>
           <StatCard
             label="อัตราชนะ"

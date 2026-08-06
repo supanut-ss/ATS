@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright   "Copyright 2026, Antigravity AI"
 #property link        "https://ats.info.com"
-#property version     "2.21"
-#property description "ATS MT5 EA v2.21 - Strict structure entries and reliable analytics"
+#property version     "2.22"
+#property description "ATS MT5 EA v2.22 - Counter-trend baseline with confirmed trend breakout"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -36,13 +36,22 @@ enum ENUM_ENTRY_MODE {
    ENTRY_MODE_STRICT_ICT = 2     // FVG/OB Inside Discount/Premium (Strict ICT)
 };
 input group "== Entry Logic =="
-input ENUM_ENTRY_MODE InpEntryMode = ENTRY_MODE_STRICT_ICT;     // Require FVG/OB inside Discount/Premium by default
-input bool     InpRequireCHoCH          = true;                  // Require directional CHoCH confirmation before entry
+input ENUM_ENTRY_MODE InpEntryMode = ENTRY_MODE_DISCOUNT_ONLY;  // Counter-only baseline performed best in matched tests
+input bool     InpRequireCHoCH          = false;                 // CHoCH-only filtering was not profitable in matched tests
 input int      InpCHoCHMaxAgeBars      = 12;                    // Expire directional CHoCH after this many closed bars
 input int      InpBOSConfirmBars        = 2;                     // Consecutive closed bars beyond the broken pivot
 input int      InpBOSMaxPendingBars     = 4;                     // Expire an unconfirmed BOS candidate after this many bars
 input int      InpFVGMaxAgeBars         = 48;                    // Maximum active age for an FVG zone
 input int      InpOBMaxAgeBars          = 48;                    // Maximum active age for an order-block zone
+
+input group "== Confirmed Trend Breakout Entry ==="
+input bool     InpUseTrendBreakout             = false;          // OFF by default; matched A/B test favored the Counter-only baseline
+input int      InpBreakoutConfirmBars          = 2;              // Consecutive closed bars beyond the confirmed pivot
+input double   InpBreakoutMinBodyATR           = 0.50;           // First breakout candle body must be at least this ATR multiple
+input double   InpBreakoutMaxExtensionATR      = 0.75;           // Skip if confirmation close is already too far from the pivot
+input double   InpBreakoutMaxCloseWickRatio    = 0.25;           // Breakout candle must close near its directional edge
+input bool     InpBreakoutRequireHTFAlignment  = true;           // Enabled H1/H4 trends must agree with the breakout
+input bool     InpBreakoutAllowVolumeSpike     = true;           // Allow momentum volume; configured news windows still block entry
 
 input group "== Scalping Risk =="
 input bool     InpUseFixedSL           = true;                  // เปิดใช้งานการตั้งค่า Stop Loss แบบคงที่
@@ -76,7 +85,7 @@ input bool     InpUseH1Trend           = true;                  // เปิด�
 input int      InpH1EMALen             = 21;                    // ความยาวเส้น EMA ในไทม์เฟรม H1
 input bool     InpUseH4Trend           = true;                  // เปิดใช้งานตัวกรองเทรนด์ของไทม์เฟรม H4 (EMA 21)
 input int      InpH4EMALen             = 21;                    // ความยาวเส้น EMA ในไทม์เฟรม H4
-input bool     InpFilterCounterTrend   = true;                  // Reject entries against either enabled H1/H4 trend
+input bool     InpFilterCounterTrend   = true;                  // Counter-only baseline: reject entries against H1/H4 trend
 
 input group "== News & Volume Filters =="
 input bool     InpUseNewsFilter        = true;                  // เปิดใช้งานตัวกรองงดเทรดในช่วงเวลาข่าว
@@ -1145,6 +1154,90 @@ bool GetATRRatioValue(double &ratio)
 }
 
 //+------------------------------------------------------------------+
+//| Read the ATR value of a specific closed bar.                     |
+//+------------------------------------------------------------------+
+bool GetATRValueAtShift(const int shift, double &atr_value)
+{
+   atr_value = 0.0;
+   if(shift < 1 || atr_handle == INVALID_HANDLE || BarsCalculated(atr_handle) <= shift)
+      return false;
+
+   double atr_buf[1];
+   if(CopyBuffer(atr_handle, 0, shift, 1, atr_buf) != 1)
+      return false;
+
+   atr_value = atr_buf[0];
+   return MathIsValidNumber(atr_value) && atr_value > 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| Confirm a fresh continuation breakout once per crossed pivot.    |
+//| The oldest confirmation bar must cross the level; every newer    |
+//| closed bar must remain beyond it. This prevents repeated entries. |
+//+------------------------------------------------------------------+
+bool IsConfirmedTrendBreakout(const int direction,
+                              const double level,
+                              double &closes[],
+                              double &opens[],
+                              double &highs[],
+                              double &lows[],
+                              double &extension_atr)
+{
+   extension_atr = 0.0;
+   if(!InpUseTrendBreakout || (direction != 1 && direction != -1) || level <= 0.0)
+      return false;
+
+   int first_break_shift = InpBreakoutConfirmBars;
+   if(ArraySize(closes) <= first_break_shift + 1
+      || ArraySize(opens) <= first_break_shift
+      || ArraySize(highs) <= first_break_shift
+      || ArraySize(lows) <= first_break_shift)
+      return false;
+
+   // Require a fresh cross, followed by consecutive closes that hold beyond
+   // the same confirmed pivot. Equality does not count as a breakout.
+   if(direction > 0)
+   {
+      if(closes[first_break_shift + 1] > level)
+         return false;
+      for(int i = first_break_shift; i >= 1; i--)
+         if(closes[i] <= level) return false;
+   }
+   else
+   {
+      if(closes[first_break_shift + 1] < level)
+         return false;
+      for(int i = first_break_shift; i >= 1; i--)
+         if(closes[i] >= level) return false;
+   }
+
+   double atr_value = 0.0;
+   if(!GetATRValueAtShift(first_break_shift, atr_value))
+      return false;
+
+   double candle_range = highs[first_break_shift] - lows[first_break_shift];
+   if(candle_range <= 0.0)
+      return false;
+
+   double directional_body = direction > 0
+                             ? closes[first_break_shift] - opens[first_break_shift]
+                             : opens[first_break_shift] - closes[first_break_shift];
+   if(directional_body <= 0.0 || directional_body / atr_value < InpBreakoutMinBodyATR)
+      return false;
+
+   double close_wick_ratio = direction > 0
+                             ? (highs[first_break_shift] - closes[first_break_shift]) / candle_range
+                             : (closes[first_break_shift] - lows[first_break_shift]) / candle_range;
+   if(close_wick_ratio > InpBreakoutMaxCloseWickRatio)
+      return false;
+
+   extension_atr = direction > 0
+                   ? (closes[1] - level) / atr_value
+                   : (level - closes[1]) / atr_value;
+   return extension_atr >= 0.0 && extension_atr <= InpBreakoutMaxExtensionATR;
+}
+
+//+------------------------------------------------------------------+
 //| CalculateChoppiness: Calculate Choppiness Index (0-100)          |
 //+------------------------------------------------------------------+
 double CalculateChoppiness(int len)
@@ -1621,7 +1714,7 @@ bool ManageEarlyExit(double closed_price,
 //+------------------------------------------------------------------+
 void ExecuteStrategyLogic()
 {
-   int hn = MathMax(2*InpPivotLength+4, 8);
+   int hn = MathMax(MathMax(2*InpPivotLength+4, 8), InpBreakoutConfirmBars+3);
    double cl[], op[], hi[], lo[];
    ArraySetAsSeries(cl,true); ArraySetAsSeries(op,true);
    ArraySetAsSeries(hi,true); ArraySetAsSeries(lo,true);
@@ -1745,6 +1838,12 @@ void ExecuteStrategyLogic()
    bool short_is_countertrend = (InpUseH1Trend && h1b) || (InpUseH4Trend && h4b);
    bool lok = htf_data_ok && (!InpFilterCounterTrend || !long_is_countertrend);
    bool sok = htf_data_ok && (!InpFilterCounterTrend || !short_is_countertrend);
+   bool long_htf_aligned = htf_data_ok
+                           && (!InpUseH1Trend || h1b)
+                           && (!InpUseH4Trend || h4b);
+   bool short_htf_aligned = htf_data_ok
+                            && (!InpUseH1Trend || h1r)
+                            && (!InpUseH4Trend || h4r);
 
    if(!htf_data_ok)
       Print("ATS EA: Entry blocked because enabled HTF trend data is unavailable.");
@@ -1789,24 +1888,29 @@ void ExecuteStrategyLogic()
    }
    
    // News & Volume filter
-    bool filter_blocked = false;
+    bool news_blocked = false;
+    bool volume_spike_blocked = false;
     if(InpUseNewsFilter)
     {
        datetime time_in_tz = GetTimeInTimezone(InpNewsTimezone);
        if(IsInSessionString(time_in_tz, InpNewsSession))
        {
-          filter_blocked = true;
-          Print("ATS EA: Trade blocked by News Filter (Current Time in Timezone: ", TimeToString(time_in_tz), ")");
+           news_blocked = true;
+           Print("ATS EA: Trade blocked by News Filter (Current Time in Timezone: ", TimeToString(time_in_tz), ")");
        }
     }
-    if(!filter_blocked && InpUseVolFilter)
+    if(InpUseVolFilter)
     {
        if(IsVolumeSpikeActive(InpVolSmaLen, InpVolSpikeMult, InpVolSpikeLookback))
        {
-          filter_blocked = true;
-          Print("ATS EA: Trade blocked by Volume Spike Filter.");
+           volume_spike_blocked = true;
+           if(!InpUseTrendBreakout || !InpBreakoutAllowVolumeSpike)
+              Print("ATS EA: Trade blocked by Volume Spike Filter.");
        }
     }
+    bool normal_filter_blocked = news_blocked || volume_spike_blocked;
+    bool breakout_filter_blocked = news_blocked
+                                   || (volume_spike_blocked && !InpBreakoutAllowVolumeSpike);
     
     // Sideway & Range Filters
     bool sideway_blocked = false;
@@ -1862,8 +1966,35 @@ void ExecuteStrategyLogic()
      if(loss_cooldown_blocked)
         Print("ATS EA: Entry blocked by Loss Cooldown (", cooldown_remaining, " minutes remaining)");
 
-     bool longCond  = (trend==1)  && choch_long_ok  && fvg_ob_bull && bull_pa && ema_lc && lok && no_pos && !early_exit_closed && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
-     bool shortCond = (trend==-1) && choch_short_ok && fvg_ob_bear && bear_pa && ema_sc && sok && no_pos && !early_exit_closed && !filter_blocked && !sideway_blocked && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
+     double bull_breakout_extension_atr = 0.0;
+     double bear_breakout_extension_atr = 0.0;
+     bool bull_breakout_confirmed = (trend == 1)
+                                     && IsConfirmedTrendBreakout(1, last_ph, cl, op, hi, lo,
+                                                                  bull_breakout_extension_atr);
+     bool bear_breakout_confirmed = (trend == -1)
+                                     && IsConfirmedTrendBreakout(-1, last_pl, cl, op, hi, lo,
+                                                                  bear_breakout_extension_atr);
+
+     bool breakout_long_htf_ok = InpBreakoutRequireHTFAlignment ? long_htf_aligned : lok;
+     bool breakout_short_htf_ok = InpBreakoutRequireHTFAlignment ? short_htf_aligned : sok;
+     bool common_entry_ok = no_pos && !early_exit_closed && !sideway_blocked
+                            && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
+
+     bool normalLongCond = (trend==1) && choch_long_ok && fvg_ob_bull && bull_pa
+                           && ema_lc && lok && common_entry_ok && !normal_filter_blocked;
+     bool normalShortCond = (trend==-1) && choch_short_ok && fvg_ob_bear && bear_pa
+                            && ema_sc && sok && common_entry_ok && !normal_filter_blocked;
+     bool breakoutLongCond = bull_breakout_confirmed && ema_lc && breakout_long_htf_ok
+                             && common_entry_ok && !breakout_filter_blocked;
+     bool breakoutShortCond = bear_breakout_confirmed && ema_sc && breakout_short_htf_ok
+                              && common_entry_ok && !breakout_filter_blocked;
+
+     // Breakout classification takes precedence when both paths become true on
+     // the same bar; common_entry_ok still guarantees a single position.
+     bool longCond = normalLongCond || breakoutLongCond;
+     bool shortCond = normalShortCond || breakoutShortCond;
+     bool long_entry_is_breakout = breakoutLongCond;
+     bool short_entry_is_breakout = breakoutShortCond;
 
    double pt        = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
    double tp_v      = InpTPPips * pt;
@@ -1895,22 +2026,30 @@ void ExecuteStrategyLogic()
       }
       double a = tk.ask;
       double slp = 0.0;
-      if(InpUseFixedSL) {
-          slp = a - (InpFixedSLPips * pt);
-      } else {
-          slp = swing_low - sl_buffer;
-          if(ob_bull_low>0 && ob_bull_low<slp) slp=ob_bull_low-sl_buffer;
-      }
+       if(InpUseFixedSL) {
+           slp = a - (InpFixedSLPips * pt);
+       } else {
+           if(long_entry_is_breakout)
+              slp = last_ph - sl_buffer;
+           else
+           {
+              slp = swing_low - sl_buffer;
+              if(ob_bull_low>0 && ob_bull_low<slp) slp=ob_bull_low-sl_buffer;
+           }
+       }
       double risk = a - slp;
       if(!InpUseFixedSL && (risk>InpMaxSLPips*pt||risk<=0))
          { risk=InpMaxSLPips*pt; slp=a-risk; }
       double atp=a+tp_v;
       if(!PrepareMarketStops(Symbol(), true, tk, slp, atp))
          return;
+      string buy_entry_tag = long_entry_is_breakout ? "BREAKOUT" : (in_bull_fvg?"FVG":in_bull_ob?"OB":"PD");
       Print("ATS EA: BUY | Ask=",a," SL=",slp," TP=",atp," Lot=",InpFixedLot,
-            " Zone=",in_bull_fvg?"FVG":in_bull_ob?"OB":"PD");
+            " Entry=",buy_entry_tag,
+            long_entry_is_breakout ? StringFormat(" ExtensionATR=%.2f", bull_breakout_extension_atr) : "");
       ResetLastError();
-      bool buy_request_ok = trade.Buy(InpFixedLot, Symbol(), a, slp, atp, "ATS BUY[BOS+FVG/OB]");
+      string buy_comment = long_entry_is_breakout ? "ATS BUY[BREAKOUT]" : "ATS BUY[BOS+FVG/OB]";
+      bool buy_request_ok = trade.Buy(InpFixedLot, Symbol(), a, slp, atp, buy_comment);
       if(IsTradeResultSuccessful(buy_request_ok, "Strategy BUY"))
       {
           ulong position_identifier = 0;
@@ -1939,22 +2078,30 @@ void ExecuteStrategyLogic()
       }
       double b = tk.bid;
       double slp = 0.0;
-      if(InpUseFixedSL) {
-          slp = b + (InpFixedSLPips * pt);
-      } else {
-          slp = swing_high + sl_buffer;
-          if(ob_bear_high>0 && ob_bear_high>slp) slp=ob_bear_high+sl_buffer;
-      }
+       if(InpUseFixedSL) {
+           slp = b + (InpFixedSLPips * pt);
+       } else {
+           if(short_entry_is_breakout)
+              slp = last_pl + sl_buffer;
+           else
+           {
+              slp = swing_high + sl_buffer;
+              if(ob_bear_high>0 && ob_bear_high>slp) slp=ob_bear_high+sl_buffer;
+           }
+       }
       double risk = slp - b;
       if(!InpUseFixedSL && (risk>InpMaxSLPips*pt||risk<=0))
          { risk=InpMaxSLPips*pt; slp=b+risk; }
       double btp=b-tp_v;
       if(!PrepareMarketStops(Symbol(), false, tk, slp, btp))
          return;
+      string sell_entry_tag = short_entry_is_breakout ? "BREAKOUT" : (in_bear_fvg?"FVG":in_bear_ob?"OB":"PD");
       Print("ATS EA: SELL | Bid=",b," SL=",slp," TP=",btp," Lot=",InpFixedLot,
-            " Zone=",in_bear_fvg?"FVG":in_bear_ob?"OB":"PD");
+            " Entry=",sell_entry_tag,
+            short_entry_is_breakout ? StringFormat(" ExtensionATR=%.2f", bear_breakout_extension_atr) : "");
       ResetLastError();
-      bool sell_request_ok = trade.Sell(InpFixedLot, Symbol(), b, slp, btp, "ATS SELL[BOS+FVG/OB]");
+      string sell_comment = short_entry_is_breakout ? "ATS SELL[BREAKOUT]" : "ATS SELL[BOS+FVG/OB]";
+      bool sell_request_ok = trade.Sell(InpFixedLot, Symbol(), b, slp, btp, sell_comment);
       if(IsTradeResultSuccessful(sell_request_ok, "Strategy SELL"))
       {
           ulong position_identifier = 0;
@@ -2108,6 +2255,16 @@ bool ValidateInputParameters()
       Print("ATS EA ERROR: BOS/CHoCH confirmation/expiry and FVG/OB maximum ages are invalid.");
       return false;
    }
+   if(InpUseTrendBreakout
+      && (InpBreakoutConfirmBars < 1 || InpBreakoutConfirmBars > 10
+          || InpBreakoutMinBodyATR <= 0.0
+          || InpBreakoutMaxExtensionATR <= 0.0
+          || InpBreakoutMaxCloseWickRatio < 0.0
+          || InpBreakoutMaxCloseWickRatio > 1.0))
+   {
+      Print("ATS EA ERROR: Breakout requires ConfirmBars 1..10, positive ATR thresholds, and CloseWickRatio in [0,1].");
+      return false;
+   }
    if(InpSLBuffer < 0.0 || InpMaxSLPips <= 0 || (InpUseFixedSL && InpFixedSLPips <= 0))
    {
       Print("ATS EA ERROR: Stop parameters require non-negative buffer and positive SL distances.");
@@ -2231,7 +2388,7 @@ int OnInit()
       adx_handle = iADX(Symbol(), Period(), InpADXLen);
       if(adx_handle == INVALID_HANDLE) { Print("ATS EA ERROR: Failed to create ADX handle"); return(INIT_FAILED); }
    }
-   if(InpUseATRFilter)
+   if(InpUseATRFilter || InpUseTrendBreakout)
    {
       atr_handle = iATR(Symbol(), Period(), 14);
       if(atr_handle == INVALID_HANDLE) { Print("ATS EA ERROR: Failed to create ATR handle"); return(INIT_FAILED); }
@@ -2253,8 +2410,8 @@ int OnInit()
       Print("ATS EA: Strategy Tester/optimization detected; timer and WebRequest calls are skipped.");
    else
       Print("ATS EA: Webhook polling timer disabled; local position synchronization remains enabled.");
-   Print("ATS EA v2.2 | Lot=",InpFixedLot," BE=",InpBEPips,"p Trail@",InpTrailLevel1Pips,"p->",InpTrailLevel1LockPips,"p TP=",InpTPPips,"p");
-   Print("ATS EA: Strategy = Liquidity + CHoCH + BOS + FVG/OB re-entry");
+   Print("ATS EA v2.22 | Lot=",InpFixedLot," BE=",InpBEPips,"p Trail@",InpTrailLevel1Pips,"p->",InpTrailLevel1LockPips,"p TP=",InpTPPips,"p");
+   Print("ATS EA: Strategy = Counter-trend filter + pullback entry + confirmed trend breakout");
    return(INIT_SUCCEEDED);
 }
 
