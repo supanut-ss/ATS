@@ -22,11 +22,14 @@ input double   InpMergeThresholdATR  = 0.50;    // Do not add nearby same-side l
 input double   InpBreakSensitivityATR= 0.10;    // Close beyond level by this ATR amount breaks it
 input double   InpZoneWidthATR       = 0.40;    // S/R Zone boundary width (ATR x)
 input bool     InpRequireRejection   = true;    // Require rejection candle (pinbar/reversal close)
+input double   InpMaxCandleATRRatio  = 2.0;     // Max candle body vs ATR (0 = disabled)
 
 input group "== Order and money targets =="
 input double   InpFixedLot           = 0.05;    // Volume per signal
-input double   InpTakeProfitMoney    = 50.0;    // Gross TP in USD/account currency (allowed: 50-100)
-input double   InpStopLossMoney      = 30.0;    // Gross SL in USD/account currency
+input int      InpStopLossPips       = 600;     // Stop Loss in pips/points (e.g. 600 pips = 6.00 USD on XAUUSD)
+input int      InpTakeProfitPips     = 1000;    // Take Profit in pips/points (e.g. 1000 pips = 10.00 USD on XAUUSD)
+input double   InpTakeProfitMoney    = 50.0;    // Gross TP in USD/account currency (fallback if InpTakeProfitPips <= 0)
+input double   InpStopLossMoney      = 30.0;    // Gross SL in USD/account currency (fallback if InpStopLossPips <= 0)
 input bool     InpRequireUSDAccount  = true;    // Reject non-USD accounts to preserve dollar targets
 input int      InpMaxOpenPositions   = 1;       // Maximum open positions (1 position at a time)
 input int      InpMaxSpreadPoints    = 0;       // 0 disables spread filter
@@ -344,10 +347,28 @@ bool OpenSignalTrade(const int direction, const double level_price,
    const ENUM_ORDER_TYPE order_type = (direction > 0) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    const double entry = (direction > 0) ? quote.ask : quote.bid;
    double sl = 0.0, tp = 0.0;
-   if(!FindMoneyPrice(order_type, volume, entry, InpStopLossMoney, false, sl) ||
-      !FindMoneyPrice(order_type, volume, entry, InpTakeProfitMoney, true, tp))
+
+   if(InpStopLossPips > 0)
    {
-      Print("S/R EA: cannot convert money targets to broker prices; signal skipped.");
+      const double sl_distance = InpStopLossPips * point;
+      sl = (direction > 0) ? entry - sl_distance : entry + sl_distance;
+      sl = NormalizeDouble(sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+   }
+   else if(!FindMoneyPrice(order_type, volume, entry, InpStopLossMoney, false, sl))
+   {
+      Print("S/R EA: cannot convert money SL target to broker price; signal skipped.");
+      return false;
+   }
+
+   if(InpTakeProfitPips > 0)
+   {
+      const double tp_distance = InpTakeProfitPips * point;
+      tp = (direction > 0) ? entry + tp_distance : entry - tp_distance;
+      tp = NormalizeDouble(tp, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+   }
+   else if(!FindMoneyPrice(order_type, volume, entry, InpTakeProfitMoney, true, tp))
+   {
+      Print("S/R EA: cannot convert money TP target to broker price; signal skipped.");
       return false;
    }
    if(!StopsAreValid(order_type, entry, sl, tp))
@@ -394,8 +415,8 @@ bool IsBullishRejection(const int shift, const double support_price,
    if(low_p > support_price + zone_width)
       return false;
 
-   // Price must not close broken below support (Close >= Support - break_buffer)
-   if(close_p < support_price - break_buffer)
+   // Price must close ABOVE or EQUAL to the Support line (Close >= Support)
+   if(close_p < support_price)
       return false;
 
    if(!InpRequireRejection)
@@ -428,8 +449,8 @@ bool IsBearishRejection(const int shift, const double resist_price,
    if(high_p < resist_price - zone_width)
       return false;
 
-   // Price must not close broken above resistance (Close <= Resistance + break_buffer)
-   if(close_p > resist_price + break_buffer)
+   // Price must close BELOW or EQUAL to the Resistance line (Close <= Resistance)
+   if(close_p > resist_price)
       return false;
 
    if(!InpRequireRejection)
@@ -444,6 +465,20 @@ bool IsBearishRejection(const int shift, const double resist_price,
    const bool is_pinbar = (upper_shadow / range >= 0.35);
 
    return (is_bearish_close || is_pinbar);
+}
+
+//+------------------------------------------------------------------+
+// Check if candle body is abnormally large compared to ATR
+bool IsCandleTooLarge(const int shift, const double atr)
+{
+   if(InpMaxCandleATRRatio <= 0.0)
+      return false;
+
+   const double open_p = iOpen(_Symbol, _Period, shift);
+   const double close_p = iClose(_Symbol, _Period, shift);
+   const double body = MathAbs(close_p - open_p);
+
+   return (body > (atr * InpMaxCandleATRRatio));
 }
 
 // Process one completed confirmation bar. Historical bars rebuild state only.
@@ -483,6 +518,12 @@ void ProcessClosedBar(const int confirmation_shift, const bool allow_trade)
    // 3. Trade Entry Logic: Check active levels for Retest & Rejection at confirmation_shift (bar 1)
    if(CountOurPositions() >= InpMaxOpenPositions)
       return;
+
+   if(IsCandleTooLarge(confirmation_shift, atr))
+   {
+      PrintFormat("S/R EA: Signal skipped. Candle body at shift %d is too large (Momentum filter).", confirmation_shift);
+      return;
+   }
 
    const double zone_width = InpZoneWidthATR * atr;
    const double break_buffer = InpBreakSensitivityATR * atr;
@@ -538,11 +579,9 @@ int OnInit()
    if(InpPivotLength < 2 || InpATRPeriod < 1 || InpMaxLevelAgeBars < 20 ||
       InpMaxLevelsEachSide < 1 || InpMergeThresholdATR < 0.0 ||
       InpBreakSensitivityATR < 0.0 || InpZoneWidthATR < 0.0 ||
-      InpFixedLot <= 0.0 || InpStopLossMoney <= 0.0 ||
-      InpTakeProfitMoney < 50.0 || InpTakeProfitMoney > 100.0 ||
-      InpMaxOpenPositions < 1)
+      InpFixedLot <= 0.0 || InpMaxOpenPositions < 1)
    {
-      Print("S/R EA: invalid inputs. TP Money must be between 50 and 100.");
+      Print("S/R EA: invalid inputs.");
       return INIT_PARAMETERS_INCORRECT;
    }
 
