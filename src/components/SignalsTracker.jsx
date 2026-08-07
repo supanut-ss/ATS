@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Box, Paper, Typography, Grid, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Chip, CircularProgress, Button,
+  TableContainer, TableHead, TableRow, Chip, CircularProgress, Button, TablePagination
 } from '@mui/material';
 import {
   ShowChart, CheckCircle, HourglassEmpty,
@@ -69,6 +69,9 @@ export default function SignalsTracker({ signals, loading, onRefresh, apiClient 
       setClearing(false);
     }
   };
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
+
   if (loading && signals.length === 0) {
     return (
       <Paper sx={{ p: 3, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
@@ -86,6 +89,9 @@ export default function SignalsTracker({ signals, loading, onRefresh, apiClient 
 
   const winRate = closedTrades.length > 0 ? (winTrades.length / closedTrades.length) * 100 : 0;
   const totalProfit = signals.reduce((sum, s) => sum + (s.profit || 0), 0);
+
+  const reversedSignals = signals.slice().reverse();
+  const displayedSignals = reversedSignals.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   const profitColor = totalProfit >= 0 ? '#10b981' : '#f43f5e';
 
@@ -188,7 +194,7 @@ export default function SignalsTracker({ signals, loading, onRefresh, apiClient 
                 </TableCell>
               </TableRow>
             ) : (
-              signals.slice().reverse().map((sig) => {
+              displayedSignals.map((sig) => {
                 const isBuy = sig.action === 'BUY';
                 const statusColor =
                   sig.status === 'WIN' ? 'success' :
@@ -251,6 +257,20 @@ export default function SignalsTracker({ signals, loading, onRefresh, apiClient 
           </TableBody>
         </Table>
       </TableContainer>
+      {signals.length > 0 && (
+        <TablePagination
+          rowsPerPageOptions={[10, 20, 50]}
+          component="div"
+          count={signals.length}
+          rowsPerPage={rowsPerPage}
+          page={page}
+          onPageChange={(e, newPage) => setPage(newPage)}
+          onRowsPerPageChange={(e) => {
+            setRowsPerPage(parseInt(e.target.value, 10));
+            setPage(0);
+          }}
+        />
+      )}
     </Box>
   );
 }

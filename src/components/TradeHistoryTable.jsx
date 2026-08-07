@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Box, Paper, Typography, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Chip, Skeleton,
+  TableContainer, TableHead, TableRow, Chip, Skeleton, TablePagination
 } from '@mui/material';
 
 const fmt = (v, d = 2) => v == null ? '—' : Number(v).toFixed(d);
@@ -25,6 +25,11 @@ export default function TradeHistoryTable({ history = [], loading }) {
     const timeB = new Date(ensureUtcIso(b.time)).getTime();
     return timeB - timeA;
   });
+
+  const [page, setPage] = React.useState(0);
+  const [rowsPerPage, setRowsPerPage] = React.useState(20);
+
+  const displayedHistory = sortedHistory.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   const totalPnl = sortedHistory.reduce((s, h) => s + (h.profit || 0), 0);
   const wins     = sortedHistory.filter(h => h.profit > 0).length;
@@ -73,7 +78,7 @@ export default function TradeHistoryTable({ history = [], loading }) {
               </TableRow>
             </TableHead>
             <TableBody>
-              {sortedHistory.map((h) => (
+              {displayedHistory.map((h) => (
                 <TableRow key={h.ticket} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.01)' } }}>
                   <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'text.secondary' }}>{h.ticket}</TableCell>
                   <TableCell>
@@ -106,6 +111,20 @@ export default function TradeHistoryTable({ history = [], loading }) {
             </TableBody>
           </Table>
         </TableContainer>
+      )}
+      {!loading && sortedHistory.length > 0 && (
+        <TablePagination
+          rowsPerPageOptions={[10, 20, 50]}
+          component="div"
+          count={sortedHistory.length}
+          rowsPerPage={rowsPerPage}
+          page={page}
+          onPageChange={(e, newPage) => setPage(newPage)}
+          onRowsPerPageChange={(e) => {
+            setRowsPerPage(parseInt(e.target.value, 10));
+            setPage(0);
+          }}
+        />
       )}
     </Paper>
   );

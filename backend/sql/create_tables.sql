@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS `trade_analytics` (
     `chop`         DOUBLE       NOT NULL DEFAULT 0,
     `atr_ratio`    DOUBLE       NOT NULL DEFAULT 0,
     `is_low_vol`   BOOLEAN      NOT NULL DEFAULT FALSE,
+    `entry_condition` VARCHAR(100) NOT NULL DEFAULT '',
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`ticket`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -123,6 +124,7 @@ CREATE TABLE IF NOT EXISTS `demo_trade_analytics` (
     `chop`         DOUBLE       NOT NULL DEFAULT 0,
     `atr_ratio`    DOUBLE       NOT NULL DEFAULT 0,
     `is_low_vol`   BOOLEAN      NOT NULL DEFAULT FALSE,
+    `entry_condition` VARCHAR(100) NOT NULL DEFAULT '',
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`ticket`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

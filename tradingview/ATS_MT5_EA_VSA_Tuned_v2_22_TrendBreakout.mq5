@@ -537,7 +537,7 @@ int fvg_bull_age = -1, fvg_bear_age = -1;
 int ob_bull_age = -1, ob_bear_age = -1;
 
 //--- Tracked positions
-struct TrackedPosition { ulong ticket; ulong identifier; string symbol; string action; double volume; double open_price; double sl; double tp; };
+struct TrackedPosition { ulong ticket; ulong identifier; string symbol; string action; double volume; double open_price; double sl; double tp; string comment; };
 TrackedPosition tracked_positions[];
 int tracked_count = 0;
 
@@ -655,7 +655,7 @@ void ForceCloseAllPositions()
    }
 }
 
-void AddTrackedPosition(ulong t, ulong identifier, string sym, string act, double vol, double op, double sl, double tp)
+void AddTrackedPosition(ulong t, ulong identifier, string sym, string act, double vol, double op, double sl, double tp, string comment="")
 {
    ArrayResize(tracked_positions, tracked_count+1);
    tracked_positions[tracked_count].ticket = t;
@@ -666,6 +666,7 @@ void AddTrackedPosition(ulong t, ulong identifier, string sym, string act, doubl
    tracked_positions[tracked_count].open_price = op;
    tracked_positions[tracked_count].sl = sl;
    tracked_positions[tracked_count].tp = tp;
+   tracked_positions[tracked_count].comment = comment;
    tracked_count++;
 }
 
@@ -719,7 +720,8 @@ void SendLocalTradeToBackend(string id, string action, string symbol, double vol
                              double entry_price, double sl, double tp, string status,
                              ulong ticket, double exit_price, double profit,
                              double mfe = 0.0, double mae = 0.0, double adx = 0.0,
-                             double chop = 0.0, double atr_ratio = 0.0, bool is_low_vol = false)
+                             double chop = 0.0, double atr_ratio = 0.0, bool is_low_vol = false,
+                             string entry_condition = "")
 {
    if(!IsExternalIntegrationAllowed()) return;
    string url  = backend_url + "/api/signals/local";
@@ -727,14 +729,16 @@ void SendLocalTradeToBackend(string id, string action, string symbol, double vol
    string pay  = StringFormat("{\"token\":\"%s\",\"id\":\"%s\",\"action\":\"%s\",\"symbol\":\"%s\","
                               "\"volume\":%s,\"entry_price\":%s,\"sl\":%s,\"tp\":%s,"
                               "\"status\":\"%s\",\"ticket\":\"%s\",\"exit_price\":%s,\"profit\":%s,"
-                              "\"mfe\":%s,\"mae\":%s,\"adx\":%s,\"chop\":%s,\"atr_ratio\":%s,\"is_low_vol\":%s}",
+                              "\"mfe\":%s,\"mae\":%s,\"adx\":%s,\"chop\":%s,\"atr_ratio\":%s,\"is_low_vol\":%s,"
+                              "\"entry_condition\":\"%s\"}",
                               auth_token, id, action, symbol,
                               DoubleToString(volume,2), DoubleToString(entry_price,2),
                               DoubleToString(sl,2), DoubleToString(tp,2),
                               status, IntegerToString(ticket),
                               DoubleToString(exit_price,2), DoubleToString(profit,2),
                               DoubleToString(mfe,5), DoubleToString(mae,5), DoubleToString(adx,2),
-                              DoubleToString(chop,2), DoubleToString(atr_ratio,3), is_low_vol ? "true" : "false");
+                              DoubleToString(chop,2), DoubleToString(atr_ratio,3), is_low_vol ? "true" : "false",
+                              entry_condition);
    char pd[], rd[]; string rh;
    StringToCharArray(pay, pd, 0, StringLen(pay), CP_UTF8);
    ResetLastError();
@@ -778,8 +782,9 @@ void SyncPositionsWithBackend()
          double sl  = PositionGetDouble(POSITION_SL);
          double tp  = PositionGetDouble(POSITION_TP);
          ulong identifier = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
-         AddTrackedPosition(tk, identifier, sym, act, vol, op, sl, tp);
-         SendLocalTradeToBackend(IntegerToString(tk), act, sym, vol, op, sl, tp, "OPEN", tk, 0.0, 0.0);
+         string comment = PositionGetString(POSITION_COMMENT);
+         AddTrackedPosition(tk, identifier, sym, act, vol, op, sl, tp, comment);
+         SendLocalTradeToBackend(IntegerToString(tk), act, sym, vol, op, sl, tp, "OPEN", tk, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, comment);
       }
    }
    for(int j = tracked_count-1; j >= 0; j--)
@@ -845,7 +850,7 @@ void SyncPositionsWithBackend()
                                  tracked_positions[j].symbol, tracked_positions[j].volume,
                                  tracked_positions[j].open_price, tracked_positions[j].sl,
                                  tracked_positions[j].tp, stat, tk, ep, pf,
-                                 mfe, mae, adx, chop, atr_ratio, low_vol);
+                                 mfe, mae, adx, chop, atr_ratio, low_vol, tracked_positions[j].comment);
 
          if(GlobalVariableCheck(max_price_key)) GlobalVariableDel(max_price_key);
          if(GlobalVariableCheck(min_price_key)) GlobalVariableDel(min_price_key);
@@ -871,7 +876,7 @@ void InitTrackedPositions()
          PositionGetString(POSITION_SYMBOL),
          (PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY)?"BUY":"SELL",
          PositionGetDouble(POSITION_VOLUME), PositionGetDouble(POSITION_PRICE_OPEN),
-         PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP));
+         PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP), PositionGetString(POSITION_COMMENT));
    }
    Print("ATS EA: Tracking ", tracked_count, " open positions.");
 }
@@ -1767,8 +1772,14 @@ void ExecuteStrategyLogic()
    double ps=GetPositionSize();
    if(trend!=1||ps>0) touched_discount=false;
    if(trend!=-1||ps<0) touched_premium=false;
-   if(trend==1&&lo[1]<=dl) touched_discount=true;
-   if(trend==-1&&hi[1]>=pl2) touched_premium=true;
+   if(trend==1) {
+      if(hi[1]>=pl2) touched_discount=false;
+      if(lo[1]<=dl) touched_discount=true;
+   }
+   if(trend==-1) {
+      if(lo[1]<=dl) touched_premium=false;
+      if(hi[1]>=pl2) touched_premium=true;
+   }
 
    // 6. FVG/OB re-entry check
    bool in_bull_fvg = fvg_bull_low>0&&fvg_bull_high>0 && lo[1]<=fvg_bull_high && hi[1]>=fvg_bull_low;
@@ -1796,8 +1807,8 @@ void ExecuteStrategyLogic()
     double bull_close_pos  = bull_range > 0 ? (cl[1] - lo[1]) / bull_range : 0.0;
     double bear_close_pos  = bear_range > 0 ? (hi[1] - cl[1]) / bear_range : 0.0;
 
-    bool bull_engulf = !InpPAEngulf || (cl[1] > op[2]);
-    bool bear_engulf = !InpPAEngulf || (cl[1] < op[2]);
+    bool bull_engulf = !InpPAEngulf || (cl[1] > hi[2]);
+    bool bear_engulf = !InpPAEngulf || (cl[1] < lo[2]);
 
     bool bull_pa = bullish_pa_raw
                 && bull_body_ratio >= InpPABodyMin
