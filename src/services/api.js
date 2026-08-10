@@ -12,12 +12,28 @@ export const BASE_URL = import.meta.env.VITE_API_URL
 export const DEMO_BASE_URL = import.meta.env.VITE_DEMO_API_URL
   || (isLocalHost ? 'http://localhost:5000/demo' : '/demo');
 
-export function createApiClient(baseUrl) {
+export function createApiClient(baseUrl, environment = 'main') {
+  const accessKeyStorageName = `ats_${environment}_dashboard_access_key`;
+  const readAccessKey = () => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return window.sessionStorage.getItem(accessKeyStorageName) || '';
+    } catch {
+      return '';
+    }
+  };
+
   const apiCall = async (path, options = {}) => {
     try {
+      const accessKey = readAccessKey();
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      };
+      if (accessKey) headers.Authorization = `Bearer ${accessKey}`;
       const res = await fetch(`${baseUrl}${path}`, {
-        headers: { 'Content-Type': 'application/json' },
         ...options,
+        headers,
       });
       const data = await res.json();
       return { ok: res.ok, data };
@@ -28,6 +44,16 @@ export function createApiClient(baseUrl) {
 
   return {
     baseUrl,
+    hasAccessKey: () => Boolean(readAccessKey()),
+    setAccessKey: (value) => {
+      if (typeof window === 'undefined') return;
+      const normalized = String(value || '').trim();
+      if (normalized) window.sessionStorage.setItem(accessKeyStorageName, normalized);
+      else window.sessionStorage.removeItem(accessKeyStorageName);
+    },
+    clearAccessKey: () => {
+      if (typeof window !== 'undefined') window.sessionStorage.removeItem(accessKeyStorageName);
+    },
     getStatus:     () => apiCall('/api/status'),
     connectMT5:    () => apiCall('/api/connect', { method: 'POST' }),
     disconnectMT5: () => apiCall('/api/disconnect', { method: 'POST' }),
@@ -49,6 +75,7 @@ export function createApiClient(baseUrl) {
     getSignals:   () => apiCall('/api/signals'),
     clearSignals: () => apiCall('/api/signals/clear', { method: 'POST' }),
     getWebhookLog: () => apiCall('/api/webhook/log'),
+    getTradeAnalytics: (limit = 100) => apiCall(`/api/trade-analytics?limit=${limit}`),
     sendTestWebhook: (payload) => apiCall('/webhook', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -56,8 +83,8 @@ export function createApiClient(baseUrl) {
   };
 }
 
-export const productionApi = createApiClient(BASE_URL);
-export const demoApi = createApiClient(DEMO_BASE_URL);
+export const productionApi = createApiClient(BASE_URL, 'main');
+export const demoApi = createApiClient(DEMO_BASE_URL, 'demo');
 export const getApiClient = (isDemo = false) => isDemo ? demoApi : productionApi;
 
 // Backward-compatible production exports for components not mounted by App yet.

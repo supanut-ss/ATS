@@ -96,7 +96,7 @@ const EA_STEPS = [
 const EA_PARAMETERS = [
   { group: '== Webhook Connection Settings ==', param: 'InpEnableWebhookPolling', defaultVal: 'false (เปลี่ยนเป็น true)', desc: 'เปิด/ปิด ระบบดึงสัญญาณเทรดผ่าน Webhook หลังบ้าน' },
   { group: '== Webhook Connection Settings ==', param: 'InpBackendURL', defaultVal: 'https://ats.thaipesleague.com', desc: 'URL API หลังบ้านสำหรับดึงสัญญาณและส่งสถานะ' },
-  { group: '== Webhook Connection Settings ==', param: 'InpAuthToken', defaultVal: 'ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f', desc: 'โทเค็นลับยืนยันตัวตนกับหลังบ้าน' },
+  { group: '== Webhook Connection Settings ==', param: 'InpAuthToken', defaultVal: 'ตั้งค่าใน MT5 Inputs เท่านั้น', desc: 'โทเค็นลับยืนยันตัวตนกับหลังบ้าน' },
   { group: '== Webhook Connection Settings ==', param: 'InpPollInterval', defaultVal: '10000 (10 วินาที)', desc: 'รอบเวลาดึงข้อมูลจากหลังบ้าน (มิลลิวินาที)' },
 
   { group: '== Trade Settings ==', param: 'InpSlippage', defaultVal: '30 Points ($0.03)', desc: 'ระยะ Slippage สูงสุดที่ยอมรับได้' },

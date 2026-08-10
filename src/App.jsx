@@ -3,7 +3,7 @@ import {
   ThemeProvider, createTheme, CssBaseline, Box,
   AppBar, Toolbar, Typography, IconButton, Button, Tooltip, CircularProgress,
   Chip, Dialog, DialogTitle, DialogContent, DialogActions,
-  Alert,
+  Alert, TextField,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -13,6 +13,7 @@ import {
   Link as LinkIcon,
   LinkOff,
   Close as CloseIcon,
+  Key as KeyIcon,
 } from '@mui/icons-material';
 
 import PositionsTable    from './components/PositionsTable';
@@ -70,6 +71,9 @@ export default function App() {
 
   const [guideOpen, setGuideOpen]     = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [accessKeyOpen, setAccessKeyOpen] = useState(false);
+  const [accessKeyInput, setAccessKeyInput] = useState('');
+  const [accessKeyConfigured, setAccessKeyConfigured] = useState(() => apiClient.hasAccessKey());
 
   const [status,    setStatus]    = useState(null);
   const [account,   setAccount]   = useState(null);
@@ -131,6 +135,21 @@ export default function App() {
     setStatus(s => ({ ...s, mt5_connected: false }));
     setAccount(null);
     setPositions([]);
+  };
+
+  const saveAccessKey = () => {
+    apiClient.setAccessKey(accessKeyInput);
+    setAccessKeyConfigured(apiClient.hasAccessKey());
+    setAccessKeyInput('');
+    setAccessKeyOpen(false);
+    fetchAll(false);
+  };
+
+  const clearAccessKey = () => {
+    apiClient.clearAccessKey();
+    setAccessKeyConfigured(false);
+    setAccessKeyInput('');
+    setAccessKeyOpen(false);
   };
 
   if (!isTradeRoute) {
@@ -211,6 +230,17 @@ export default function App() {
                   ? <CircularProgress size={18} sx={{ color: 'text.secondary' }} />
                   : <RefreshIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
                 }
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title={accessKeyConfigured ? 'Dashboard access key is set for this session' : 'Set dashboard access key'}>
+              <IconButton
+                onClick={() => setAccessKeyOpen(true)}
+                size="small"
+                color={accessKeyConfigured ? 'success' : 'default'}
+                sx={{ border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                <KeyIcon sx={{ fontSize: 18 }} />
               </IconButton>
             </Tooltip>
 
@@ -328,6 +358,31 @@ export default function App() {
           </Box>
         </Box>
       </Box>
+
+      <Dialog open={accessKeyOpen} onClose={() => setAccessKeyOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Dashboard access key</DialogTitle>
+        <DialogContent>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            The key stays only in this browser-tab session and is never included in the website bundle.
+          </Alert>
+          <TextField
+            autoFocus
+            fullWidth
+            type="password"
+            label={isDemoRoute ? 'Demo dashboard key' : 'Main dashboard key'}
+            value={accessKeyInput}
+            onChange={(event) => setAccessKeyInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && accessKeyInput.trim()) saveAccessKey();
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          {accessKeyConfigured && <Button color="error" onClick={clearAccessKey}>Clear</Button>}
+          <Button onClick={() => setAccessKeyOpen(false)}>Cancel</Button>
+          <Button variant="contained" disabled={!accessKeyInput.trim()} onClick={saveAccessKey}>Save for session</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* --- Guide Dialog Popup --- */}
       <Dialog
