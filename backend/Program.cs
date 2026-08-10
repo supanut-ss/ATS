@@ -937,10 +937,10 @@ ON DUPLICATE KEY UPDATE
         await conn.OpenAsync();
         var sql = $@"
 INSERT INTO `{table}` 
-(ticket, symbol, action, entry_price, exit_price, profit, mfe, mae, adx, chop, atr_ratio, is_low_vol)
-VALUES (@ticket, @symbol, @action, @entry_price, @exit_price, @profit, @mfe, @mae, @adx, @chop, @atr_ratio, @is_low_vol)
+(ticket, symbol, action, entry_price, exit_price, profit, mfe, mae, adx, chop, atr_ratio, is_low_vol, entry_condition)
+VALUES (@ticket, @symbol, @action, @entry_price, @exit_price, @profit, @mfe, @mae, @adx, @chop, @atr_ratio, @is_low_vol, @entry_condition)
 ON DUPLICATE KEY UPDATE 
-    exit_price=VALUES(exit_price), profit=VALUES(profit), mfe=VALUES(mfe), mae=VALUES(mae)";
+    exit_price=VALUES(exit_price), profit=VALUES(profit), mfe=VALUES(mfe), mae=VALUES(mae), entry_condition=VALUES(entry_condition)";
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@ticket", p.Ticket);
         cmd.Parameters.AddWithValue("@symbol", p.Symbol);
@@ -954,6 +954,7 @@ ON DUPLICATE KEY UPDATE
         cmd.Parameters.AddWithValue("@chop", p.Chop);
         cmd.Parameters.AddWithValue("@atr_ratio", p.AtrRatio);
         cmd.Parameters.AddWithValue("@is_low_vol", p.IsLowVol);
+        cmd.Parameters.AddWithValue("@entry_condition", p.EntryCondition ?? "");
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -1502,4 +1503,5 @@ public class LocalTradePayload
     [JsonPropertyName("chop")]        public double Chop { get; set; }
     [JsonPropertyName("atr_ratio")]   public double AtrRatio { get; set; }
     [JsonPropertyName("is_low_vol")]  public bool IsLowVol { get; set; }
+    [JsonPropertyName("entry_condition")] public string EntryCondition { get; set; } = string.Empty;
 }

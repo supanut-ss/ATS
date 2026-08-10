@@ -21,6 +21,7 @@ import TradeHistoryTable from './components/TradeHistoryTable';
 import WebhookGuide      from './components/WebhookGuide';
 import SignalsTracker    from './components/SignalsTracker';
 import QuickOverview     from './components/QuickOverview';
+import TradeAnalytics    from './components/TradeAnalytics';
 import WorldCupPredictions from './components/WorldCupPredictions';
 
 import { getApiClient } from './services/api';
@@ -196,10 +197,10 @@ export default function App() {
               <MonetizationOn sx={{ fontSize: 22, color: '#fff' }} />
             </Box>
             <Box>
-              <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1, background: 'linear-gradient(90deg,#fbbf24,#f59e0b)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1, fontSize: { xs: '1rem', sm: '1.25rem' }, background: 'linear-gradient(90deg,#fbbf24,#f59e0b)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                 {isDemoRoute ? 'Script Test Dashboard' : 'XAUUSD Bot Dashboard'}
               </Typography>
-              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontSize: '0.7rem' }}>
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', sm: 'block' }, fontSize: '0.7rem' }}>
                 {isDemoRoute ? 'ISOLATED DEMO · Same backend via /demo' : 'MAIN · Automated Pure Structure EA'}
               </Typography>
             </Box>
@@ -207,12 +208,6 @@ export default function App() {
 
           {/* Center/Right Status and Actions */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Chip
-              label={isDemoRoute ? 'DEMO / TEST' : 'MAIN'}
-              size="small"
-              color={isDemoRoute ? 'warning' : 'primary'}
-              sx={{ fontWeight: 900, letterSpacing: 0.6 }}
-            />
             <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 0.5 }}>
               <Button size="small" href="/" variant={!isDemoRoute ? 'contained' : 'text'}>Main</Button>
               <Button size="small" href="/demo" color="warning" variant={isDemoRoute ? 'contained' : 'text'}>Demo</Button>
@@ -263,9 +258,10 @@ export default function App() {
             <Box sx={{ display: 'flex', gap: 1 }}>
               <Button
                 variant="outlined"
-                startIcon={<Webhook />}
                 onClick={() => setGuideOpen(true)}
                 sx={{
+                  minWidth: { xs: 40, md: 'auto' },
+                  px: { xs: 1, md: 2 },
                   borderRadius: 2,
                   fontSize: '0.8rem',
                   borderColor: 'rgba(99,102,241,0.25)',
@@ -273,13 +269,15 @@ export default function App() {
                   '&:hover': { borderColor: '#818cf8', bgcolor: 'rgba(99,102,241,0.04)' }
                 }}
               >
-                คู่มือการตั้งค่า
+                <Webhook sx={{ mr: { xs: 0, md: 1 }, fontSize: 20 }} />
+                <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>คู่มือการตั้งค่า</Box>
               </Button>
               <Button
                 variant="outlined"
-                startIcon={<HistoryIcon />}
                 onClick={() => setHistoryOpen(true)}
                 sx={{
+                  minWidth: { xs: 40, md: 'auto' },
+                  px: { xs: 1, md: 2 },
                   borderRadius: 2,
                   fontSize: '0.8rem',
                   borderColor: 'rgba(255,255,255,0.08)',
@@ -287,7 +285,8 @@ export default function App() {
                   '&:hover': { borderColor: 'rgba(255,255,255,0.2)', bgcolor: 'rgba(255,255,255,0.02)' }
                 }}
               >
-                ประวัติการเทรด
+                <HistoryIcon sx={{ mr: { xs: 0, md: 1 }, fontSize: 20 }} />
+                <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>ประวัติการเทรด</Box>
               </Button>
               <Button
                 variant="contained"
@@ -295,8 +294,9 @@ export default function App() {
                 disabled={instanceMismatch}
                 color={connected ? 'error' : 'primary'}
                 size="medium"
-                startIcon={connected ? <LinkOff /> : <LinkIcon />}
                 sx={{
+                  minWidth: { xs: 40, md: 'auto' },
+                  px: { xs: 1, md: 2 },
                   borderRadius: 2,
                   fontSize: '0.8rem',
                   fontWeight: 700,
@@ -304,7 +304,10 @@ export default function App() {
                   boxShadow: connected ? undefined : '0 4px 12px rgba(99,102,241,0.2)',
                 }}
               >
-                {connected ? 'ยกเลิกเชื่อมต่อ MT5' : 'เชื่อมต่อ MT5'}
+                {connected ? <LinkOff sx={{ mr: { xs: 0, md: 1 }, fontSize: 20 }} /> : <LinkIcon sx={{ mr: { xs: 0, md: 1 }, fontSize: 20 }} />}
+                <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>
+                  {connected ? 'ยกเลิกเชื่อมต่อ' : 'เชื่อมต่อ MT5'}
+                </Box>
               </Button>
             </Box>
           </Box>
@@ -347,6 +350,9 @@ export default function App() {
             positions={positions}
             risk={risk}
           />
+
+          {/* Trade Analytics (Equity Curve & Session) */}
+          <TradeAnalytics signals={history} initialCapital={300} />
 
           {/* 2. Main content layout */}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5 }}>
