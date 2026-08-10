@@ -3226,6 +3226,68 @@ void OnDeinit(const int reason)
    Comment("");
 }
 
+void SendHeartbeat()
+{
+   if(!InpEnableDemoAnalytics)
+      return;
+
+   static datetime last_heartbeat = 0;
+   const datetime now = TimeLocal();
+   if(now - last_heartbeat < 5)
+      return;
+   last_heartbeat = now;
+
+   string base_url = InpAnalyticsBaseURL;
+   while(StringLen(base_url) > 0 && StringSubstr(base_url, StringLen(base_url) - 1, 1) == "/")
+      base_url = StringSubstr(base_url, 0, StringLen(base_url) - 1);
+   if(StringLen(base_url) == 0)
+      return;
+
+   const string url = base_url + "/api/signals/pending";
+   const double bal = AccountInfoDouble(ACCOUNT_BALANCE);
+   const double eq = AccountInfoDouble(ACCOUNT_EQUITY);
+   const double fm = AccountInfoDouble(ACCOUNT_FREEMARGIN);
+   const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   const double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   string positions_json = "[";
+   int pos_count = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; --i)
+   {
+      const ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket) ||
+         PositionGetString(POSITION_SYMBOL) != _Symbol ||
+         (ulong)PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+         continue;
+
+      if(pos_count > 0)
+         positions_json += ",";
+
+      const long ptype = PositionGetInteger(POSITION_TYPE);
+      const string stype = (ptype == POSITION_TYPE_BUY ? "BUY" : "SELL");
+      positions_json += StringFormat("{\"ticket\":\"%I64u\",\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%.2f,\"open_price\":%.5f,\"current_price\":%.5f,\"sl\":%.5f,\"tp\":%.5f,\"profit\":%.2f}",
+         ticket, PositionGetString(POSITION_SYMBOL), stype,
+         PositionGetDouble(POSITION_VOLUME), PositionGetDouble(POSITION_PRICE_OPEN),
+         PositionGetDouble(POSITION_PRICE_CURRENT), PositionGetDouble(POSITION_SL),
+         PositionGetDouble(POSITION_TP), PositionGetDouble(POSITION_PROFIT));
+      pos_count++;
+   }
+   positions_json += "]";
+
+   const string payload = StringFormat("{\"token\":\"%s\",\"balance\":%.2f,\"equity\":%.2f,\"free_margin\":%.2f,\"bid\":%.5f,\"ask\":%.5f,\"positions\":%s}",
+      InpAnalyticsToken, bal, eq, fm, bid, ask, positions_json);
+
+   char pd[], rd[];
+   string rh;
+   StringToCharArray(payload, pd, 0, StringLen(payload), CP_UTF8);
+   if(ArraySize(pd) > 0)
+      ArrayResize(pd, ArraySize(pd) - 1);
+
+   const string headers = "Content-Type: application/json\r\n";
+   ResetLastError();
+   WebRequest("POST", url, headers, InpAnalyticsTimeoutMs, pd, rd, rh);
+}
+
 //+------------------------------------------------------------------+
 void OnTimer()
 {
@@ -3238,6 +3300,7 @@ void OnTimer()
    FinalizeClosedTelemetry();
    SaveTelemetryOutbox();
    SendPendingTradeAnalytics();
+   SendHeartbeat();
 }
 
 //+------------------------------------------------------------------+

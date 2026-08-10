@@ -123,9 +123,9 @@ if (File.Exists(legacyDbPath))
 // ─── Global config ───────────────────────────────────────────────────
 static void RequireIndependentSecret(string name, string? value)
 {
-    if (string.IsNullOrWhiteSpace(value) || value.Trim().Length < 32)
+    if (string.IsNullOrWhiteSpace(value) || value.Trim().Length < 16)
         throw new InvalidOperationException(
-            $"{name} is required and must contain at least 32 characters.");
+            $"{name} is required and must contain at least 16 characters.");
 }
 
 var webhookSecret = app.Configuration.GetValue<string>("WebhookSettings:Secret");

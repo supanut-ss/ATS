@@ -16,7 +16,7 @@ const ensureUtcIso = (dateStr) => {
 const fmtTime = (iso) => {
   if (!iso) return '—';
   const d = new Date(ensureUtcIso(iso));
-  return d.toLocaleDateString('th-TH') + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString('en-US') + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 };
 
 export default function TradeHistoryTable({ history = [], loading }) {
@@ -39,7 +39,7 @@ export default function TradeHistoryTable({ history = [], loading }) {
     <Paper sx={{ p: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Typography variant="h6" sx={{ fontWeight: 700 }}>ประวัติการเทรด</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>Trade History</Typography>
           <Chip label={`${sortedHistory.length} trades`} size="small" sx={{ bgcolor: 'rgba(255,255,255,0.05)', color: 'text.secondary' }} />
         </Box>
         <Box sx={{ display: 'flex', gap: 2 }}>

@@ -43,22 +43,26 @@ export default function PositionsTable({ positions = [], onRefresh, apiClient = 
   const totalPnl = positions.reduce((s, p) => s + (p.profit || 0), 0);
 
   return (
-    <Paper sx={{
+    <Paper className="glow-card" sx={{
       height: H, minHeight: H, boxSizing: 'border-box',
       display: 'flex', flexDirection: 'column',
       borderColor: 'rgba(255,255,255,0.06)',
       overflow: 'hidden',
+      background: 'linear-gradient(180deg, rgba(17,24,39,0.7) 0%, rgba(10,15,30,0.9) 100%)',
+      backdropFilter: 'blur(16px)',
     }}>
       {/* Header — has horizontal padding */}
       <Box sx={{
-        px: 2.5, py: 1.75,
-        background: 'linear-gradient(135deg,rgba(99,102,241,0.08) 0%,rgba(139,92,246,0.04) 100%)',
+        px: 2.5, py: 2,
+        background: 'linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(139,92,246,0.04) 100%)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1,
         flexShrink: 0,
       }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography sx={{ fontWeight: 700, fontSize: '0.88rem' }}>ออเดอร์ที่เปิดอยู่</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Typography sx={{ fontWeight: 800, fontSize: '0.85rem', color: '#c7d2fe', letterSpacing: 0.5, textTransform: 'uppercase' }}>
+            Active Positions
+          </Typography>
           <Chip
             label={positions.length}
             size="small"
@@ -69,25 +73,29 @@ export default function PositionsTable({ positions = [], onRefresh, apiClient = 
               label={`Float ${fmtPnl(totalPnl)}`}
               size="small"
               sx={{
-                bgcolor: totalPnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(244,63,94,0.1)',
+                bgcolor: totalPnl >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(244,63,94,0.12)',
                 color:   totalPnl >= 0 ? '#10b981' : '#f43f5e',
-                fontWeight: 700, height: 18, fontSize: '0.68rem',
+                fontWeight: 800, height: 18, fontSize: '0.68rem',
               }}
             />
           )}
         </Box>
         {positions.length > 0 && (
           <Button
-            variant="outlined" color="error" size="small"
+            variant="contained" color="error" size="small"
             disabled={actionsDisabled}
             onClick={handleCloseAll}
             sx={{
-              borderColor: 'rgba(244,63,94,0.35)', color: '#f43f5e', fontSize: '0.68rem',
-              py: 0.3, px: 1.25,
-              '&:hover': { bgcolor: 'rgba(244,63,94,0.06)', borderColor: '#f43f5e' },
+              bgcolor: 'linear-gradient(135deg, #e11d48, #be123c)',
+              boxShadow: '0 4px 10px rgba(225,29,72,0.15)',
+              fontSize: '0.68rem',
+              fontWeight: 800,
+              py: 0.5, px: 1.5,
+              borderRadius: 1.5,
+              '&:hover': { bgcolor: '#be123c' },
             }}
           >
-            Close All
+            Close All Positions
           </Button>
         )}
       </Box>
@@ -96,44 +104,46 @@ export default function PositionsTable({ positions = [], onRefresh, apiClient = 
       {positions.length === 0 ? (
         <Box sx={{
           flexGrow: 1, display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', gap: 1,
+          alignItems: 'center', justifyContent: 'center', gap: 1.5,
         }}>
           <Box sx={{
-            width: 44, height: 44, borderRadius: '50%',
-            bgcolor: 'rgba(255,255,255,0.03)', border: '1px dashed rgba(255,255,255,0.1)',
+            width: 48, height: 48, borderRadius: '50%',
+            bgcolor: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.1)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <TrendingUp sx={{ fontSize: 20, color: 'text.disabled' }} />
+            <TrendingUp sx={{ fontSize: 22, color: 'text.disabled' }} />
           </Box>
-          <Typography sx={{ color: 'text.disabled', fontSize: '0.78rem' }}>ไม่มีออเดอร์เปิดอยู่</Typography>
+          <Typography sx={{ color: 'text.secondary', fontSize: '0.75rem', fontWeight: 600 }}>
+            No Active Positions
+          </Typography>
         </Box>
       ) : (
         /* TableContainer fills remaining height, no extra px padding */
         <TableContainer sx={{ flexGrow: 1, overflow: 'auto' }}>
-          <Table size="small" stickyHeader sx={{ tableLayout: 'fixed', width: '100%', minWidth: { xs: 600, lg: '100%' } }}>
+          <Table size="small" stickyHeader sx={{ tableLayout: 'fixed', width: '100%', minWidth: { xs: 700, lg: '100%' } }}>
             <TableHead>
               <TableRow>
                 {[
-                  { label: 'Ticket',  width: '22%' },
-                  { label: 'Type',    width: '12%' },
-                  { label: 'Lot',     width: '8%'  },
+                  { label: 'Ticket',  width: '18%' },
+                  { label: 'Type',    width: '13%' },
+                  { label: 'Lot',     width: '10%' },
                   { label: 'Open',    width: '13%' },
                   { label: 'Current', width: '13%' },
-                  { label: 'SL',      width: '10%' },
-                  { label: 'TP',      width: '10%' },
-                  { label: 'P/L',     width: '10%' },
-                  { label: '',        width: '12%' },
+                  { label: 'SL',      width: '11%' },
+                  { label: 'TP',      width: '11%' },
+                  { label: 'P/L',     width: '11%' },
+                  { label: '',        width: '10%' },
                 ].map(({ label, width }) => (
                   <TableCell
                     key={label}
                     sx={{
-                      width, color: 'text.secondary', fontWeight: 700,
-                      fontSize: '0.6rem', py: 0.9,
+                      width, color: 'text.secondary', fontWeight: 800,
+                      fontSize: '0.62rem', py: 1.2,
                       pl: label === 'Ticket' ? 2.5 : 1,
-                      pr: label === '' ? 1.5 : 1,
-                      bgcolor: '#0d1421',
+                      pr: label === '' ? 2 : 1,
+                      bgcolor: 'rgba(15, 23, 42, 0.95)',
                       borderBottom: '1px solid rgba(255,255,255,0.06)',
-                      textTransform: 'uppercase', letterSpacing: 0.5,
+                      textTransform: 'uppercase', letterSpacing: 0.8,
                       whiteSpace: 'nowrap',
                     }}
                   >
@@ -146,12 +156,12 @@ export default function PositionsTable({ positions = [], onRefresh, apiClient = 
               {positions.map((p) => (
                 <TableRow
                   key={p.ticket}
-                  sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.015)' } }}
+                  sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, transition: 'background-color 0.2s ease' }}
                 >
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.7rem', color: 'text.disabled', py: 1, pl: 2.5, pr: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'text.disabled', py: 1.2, pl: 2.5, pr: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {p.ticket}
                   </TableCell>
-                  <TableCell sx={{ py: 1, px: 1 }}>
+                  <TableCell sx={{ py: 1.2, px: 1 }}>
                     <Chip
                       label={p.type}
                       size="small"
@@ -162,35 +172,36 @@ export default function PositionsTable({ positions = [], onRefresh, apiClient = 
                         bgcolor: p.type === 'BUY' ? 'rgba(16,185,129,0.12)' : 'rgba(244,63,94,0.12)',
                         color:   p.type === 'BUY' ? '#10b981' : '#f43f5e',
                         fontWeight: 800, fontSize: '0.6rem', height: 18,
+                        borderRadius: 1
                       }}
                     />
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 700, fontSize: '0.72rem', py: 1, px: 1 }}>{p.volume}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.72rem', py: 1, px: 1 }}>{fmt(p.open_price)}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.72rem', py: 1, px: 1, color: '#f3f4f6', fontWeight: 600 }}>{fmt(p.current_price)}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#f43f5e', py: 1, px: 1 }}>
-                    {p.sl ? fmt(p.sl) : <span style={{ color: '#374151' }}>—</span>}
+                  <TableCell sx={{ fontWeight: 800, fontSize: '0.75rem', py: 1.2, px: 1, color: '#f3f4f6' }}>{p.volume}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem', py: 1.2, px: 1, color: 'text.secondary' }}>{fmt(p.open_price)}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem', py: 1.2, px: 1, color: '#fbbf24', fontWeight: 700 }}>{fmt(p.current_price)}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#f43f5e', py: 1.2, px: 1, fontWeight: 500 }}>
+                    {p.sl ? fmt(p.sl) : <span style={{ color: 'rgba(255,255,255,0.15)' }}>—</span>}
                   </TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#10b981', py: 1, px: 1 }}>
-                    {p.tp ? fmt(p.tp) : <span style={{ color: '#374151' }}>—</span>}
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#10b981', py: 1.2, px: 1, fontWeight: 500 }}>
+                    {p.tp ? fmt(p.tp) : <span style={{ color: 'rgba(255,255,255,0.15)' }}>—</span>}
                   </TableCell>
-                  <TableCell sx={{ py: 1, px: 1 }}>
-                    <Typography sx={{
-                      fontWeight: 800, fontSize: '0.78rem',
+                  <TableCell sx={{ py: 1.2, px: 1 }}>
+                    <Typography className="mono" sx={{
+                      fontWeight: 900, fontSize: '0.82rem',
                       color: p.profit >= 0 ? '#10b981' : '#f43f5e',
                       whiteSpace: 'nowrap',
                     }}>
                       {fmtPnl(p.profit)}
                     </Typography>
                   </TableCell>
-                  <TableCell sx={{ py: 1, pl: 0.5, pr: 1.5, textAlign: 'right' }}>
-                    <Box sx={{ display: 'flex', gap: 0.25, justifyContent: 'flex-end' }}>
+                  <TableCell sx={{ py: 1.2, pl: 0.5, pr: 2, textAlign: 'right' }}>
+                    <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
                       <Tooltip title="Modify SL/TP">
                         <IconButton
                           size="small"
                           onClick={() => setModifyDialog({ ticket: p.ticket, sl: p.sl || '', tp: p.tp || '' })}
                           disabled={actionsDisabled}
-                          sx={{ color: 'text.disabled', '&:hover': { color: '#818cf8' }, p: 0.4 }}
+                          sx={{ color: 'text.secondary', bgcolor: 'rgba(255,255,255,0.02)', '&:hover': { color: '#818cf8', bgcolor: 'rgba(99,102,241,0.1)' }, p: 0.5, borderRadius: 1 }}
                         >
                           <Edit sx={{ fontSize: 13 }} />
                         </IconButton>
@@ -200,7 +211,7 @@ export default function PositionsTable({ positions = [], onRefresh, apiClient = 
                           size="small"
                           disabled={actionsDisabled || closing === p.ticket}
                           onClick={() => handleClose(p.ticket)}
-                          sx={{ color: 'text.disabled', '&:hover': { color: '#f43f5e' }, p: 0.4 }}
+                          sx={{ color: 'text.secondary', bgcolor: 'rgba(255,255,255,0.02)', '&:hover': { color: '#f43f5e', bgcolor: 'rgba(244,63,94,0.1)' }, p: 0.5, borderRadius: 1 }}
                         >
                           <Close sx={{ fontSize: 13 }} />
                         </IconButton>
@@ -217,22 +228,45 @@ export default function PositionsTable({ positions = [], onRefresh, apiClient = 
       {/* Modify Dialog */}
       <Dialog
         open={!!modifyDialog} onClose={() => setModifyDialog(null)} maxWidth="xs" fullWidth
-        PaperProps={{ sx: { bgcolor: '#111827', border: '1px solid rgba(255,255,255,0.08)' } }}
+        PaperProps={{
+          sx: {
+            bgcolor: 'background.paper',
+            borderRadius: 2.5,
+            border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '0 10px 40px rgba(0,0,0,0.5)'
+          }
+        }}
       >
-        <DialogTitle sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
-          Modify SL / TP — #{modifyDialog?.ticket}
+        <DialogTitle sx={{ fontWeight: 800, fontSize: '0.95rem', borderBottom: '1px solid rgba(255,255,255,0.05)', pb: 1.5 }}>
+          Modify SL / TP — Ticket #{modifyDialog?.ticket}
         </DialogTitle>
-        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '12px !important' }}>
-          <TextField label="Stop Loss (price)" type="number" value={modifyDialog?.sl ?? ''} size="small" fullWidth
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: '20px !important' }}>
+          <TextField
+            label="Stop Loss (SL Price)"
+            type="number"
+            value={modifyDialog?.sl ?? ''}
+            size="small"
+            fullWidth
             onChange={e => setModifyDialog(d => ({ ...d, sl: e.target.value }))}
-            inputProps={{ step: 0.01 }} helperText="Leave 0 to remove SL" />
-          <TextField label="Take Profit (price)" type="number" value={modifyDialog?.tp ?? ''} size="small" fullWidth
+            inputProps={{ step: 0.01 }}
+            helperText="Set to 0 or leave empty to remove SL protection"
+            FormHelperTextProps={{ sx: { mx: 0 } }}
+          />
+          <TextField
+            label="Take Profit (TP Price)"
+            type="number"
+            value={modifyDialog?.tp ?? ''}
+            size="small"
+            fullWidth
             onChange={e => setModifyDialog(d => ({ ...d, tp: e.target.value }))}
-            inputProps={{ step: 0.01 }} helperText="Leave 0 to remove TP" />
+            inputProps={{ step: 0.01 }}
+            helperText="Set to 0 or leave empty to remove TP target"
+            FormHelperTextProps={{ sx: { mx: 0 } }}
+          />
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setModifyDialog(null)} color="inherit">Cancel</Button>
-          <Button onClick={handleModify} variant="contained" disabled={actionsDisabled}>Apply</Button>
+        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
+          <Button onClick={() => setModifyDialog(null)} color="inherit" sx={{ fontWeight: 700 }}>Cancel</Button>
+          <Button onClick={handleModify} variant="contained" disabled={actionsDisabled} sx={{ fontWeight: 700, px: 3 }}>Apply Modification</Button>
         </DialogActions>
       </Dialog>
     </Paper>

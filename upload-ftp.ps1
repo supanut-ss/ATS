@@ -148,6 +148,10 @@ function Upload-File {
         return
     }
 
+    if (-not (Test-Path $SourceFile)) {
+        return
+    }
+
     $fileBytes = [System.IO.File]::ReadAllBytes($SourceFile)
 
     for ($attempt = 1; $attempt -le 2; $attempt++) {
