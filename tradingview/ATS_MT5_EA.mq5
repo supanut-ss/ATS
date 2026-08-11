@@ -15,7 +15,7 @@
 input group "== Webhook Connection Settings =="
 input bool     InpEnableWebhookPolling = false;                 // เปิดใช้งานการดึงสัญญาณการเทรดผ่าน Webhook
 input string   InpBackendURL           = "https://ats.thaipesleague.com/demo"; // ลิงก์ API หลังบ้าน C# (โหมด Demo)
-input string   InpAuthToken            = "ats_demo_sec_1122334455667788"; // โทเค็นยืนยันตัวตนสำหรับดึงสัญญาณ (Demo)
+input string   InpAuthToken            = ""; // โทเค็นยืนยันตัวตนสำหรับดึงสัญญาณ (Demo)
 input int      InpPollInterval         = 10000;                 // รอบเวลาการดึงข้อมูลจากหลังบ้าน (มิลลิวินาที)
 
 input group "== Trade Settings =="

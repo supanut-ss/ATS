@@ -3,7 +3,7 @@ import {
   ThemeProvider, createTheme, CssBaseline, Box,
   AppBar, Toolbar, Typography, IconButton, Button, Tooltip, CircularProgress,
   Chip, Dialog, DialogTitle, DialogContent, DialogActions,
-  Alert,
+  Alert, TextField, Grid, Paper,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -13,6 +13,10 @@ import {
   Link as LinkIcon,
   LinkOff,
   Close as CloseIcon,
+  Key as KeyIcon,
+  Dns as DnsIcon,
+  CellTower as CellTowerIcon,
+  Speed as SpeedIcon,
 } from '@mui/icons-material';
 
 import PositionsTable    from './components/PositionsTable';
@@ -20,7 +24,6 @@ import TradeHistoryTable from './components/TradeHistoryTable';
 import WebhookGuide      from './components/WebhookGuide';
 import SignalsTracker    from './components/SignalsTracker';
 import QuickOverview     from './components/QuickOverview';
-import TradeAnalytics    from './components/TradeAnalytics';
 import WorldCupPredictions from './components/WorldCupPredictions';
 
 import { getApiClient } from './services/api';
@@ -32,32 +35,34 @@ const theme = createTheme({
     secondary:  { main: '#10b981' },
     error:      { main: '#f43f5e' },
     warning:    { main: '#f59e0b' },
-    background: { default: '#0b0f19', paper: '#111827' },
+    background: { default: '#05070f', paper: 'rgba(17, 24, 39, 0.75)' },
     text:       { primary: '#f3f4f6', secondary: '#9ca3af' },
-    divider:    'rgba(255,255,255,0.07)',
+    divider:    'rgba(255,255,255,0.06)',
   },
   typography: {
     fontFamily: '"Plus Jakarta Sans","Outfit","Inter",sans-serif',
-    button: { textTransform: 'none', fontWeight: 600 },
+    button: { textTransform: 'none', fontWeight: 700 },
   },
   components: {
     MuiPaper: {
       styleOverrides: {
         root: {
           backgroundImage: 'none',
-          borderRadius: 12,
+          borderRadius: 16,
           border: '1px solid rgba(255,255,255,0.05)',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.3)',
+          background: 'linear-gradient(180deg, rgba(20, 25, 40, 0.5) 0%, rgba(10, 15, 30, 0.8) 100%)',
+          backdropFilter: 'blur(16px)',
         },
       },
     },
     MuiTableCell: {
       styleOverrides: {
-        root: { borderBottom: '1px solid rgba(255,255,255,0.04)' },
+        root: { borderBottom: '1px solid rgba(255,255,255,0.04)', py: 1.2 },
       },
     },
     MuiButton: {
-      styleOverrides: { root: { borderRadius: 8, textTransform: 'none' } },
+      styleOverrides: { root: { borderRadius: 10, textTransform: 'none', fontWeight: 700 } },
     },
   },
 });
@@ -71,6 +76,9 @@ export default function App() {
 
   const [guideOpen, setGuideOpen]     = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [accessKeyOpen, setAccessKeyOpen] = useState(false);
+  const [accessKeyInput, setAccessKeyInput] = useState('');
+  const [accessKeyConfigured, setAccessKeyConfigured] = useState(() => apiClient.hasAccessKey());
 
   const [status,    setStatus]    = useState(null);
   const [account,   setAccount]   = useState(null);
@@ -134,6 +142,21 @@ export default function App() {
     setPositions([]);
   };
 
+  const saveAccessKey = () => {
+    apiClient.setAccessKey(accessKeyInput);
+    setAccessKeyConfigured(apiClient.hasAccessKey());
+    setAccessKeyInput('');
+    setAccessKeyOpen(false);
+    fetchAll(false);
+  };
+
+  const clearAccessKey = () => {
+    apiClient.clearAccessKey();
+    setAccessKeyConfigured(false);
+    setAccessKeyInput('');
+    setAccessKeyOpen(false);
+  };
+
   if (!isTradeRoute) {
     return (
       <ThemeProvider theme={theme}>
@@ -160,8 +183,8 @@ export default function App() {
       <AppBar
         position="fixed"
         sx={{
-          bgcolor: 'rgba(11,15,25,0.75)',
-          backdropFilter: 'blur(12px)',
+          bgcolor: 'rgba(5, 7, 15, 0.75)',
+          backdropFilter: 'blur(16px)',
           borderBottom: isDemoRoute ? '2px solid rgba(245,158,11,0.65)' : '1px solid rgba(255,255,255,0.05)',
           boxShadow: 'none',
         }}
@@ -170,18 +193,18 @@ export default function App() {
           {/* Logo / Title */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <Box sx={{
-              p: 0.7, borderRadius: 1.5,
-              background: isDemoRoute ? 'linear-gradient(135deg,#f59e0b,#ef4444)' : 'linear-gradient(135deg,#6366f1,#d97706)',
+              p: 0.7, borderRadius: 2,
+              background: isDemoRoute ? 'linear-gradient(135deg,#f59e0b,#ef4444)' : 'linear-gradient(135deg,#6366f1,#fbbf24)',
               display: 'flex',
               alignItems: 'center',
             }}>
               <MonetizationOn sx={{ fontSize: 22, color: '#fff' }} />
             </Box>
             <Box>
-              <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1, fontSize: { xs: '1rem', sm: '1.25rem' }, background: 'linear-gradient(90deg,#fbbf24,#f59e0b)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1, fontSize: { xs: '1rem', sm: '1.15rem' }, background: 'linear-gradient(90deg,#FFE082,#FFB300)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                 {isDemoRoute ? 'Script Test Dashboard' : 'XAUUSD Bot Dashboard'}
               </Typography>
-              <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', sm: 'block' }, fontSize: '0.7rem' }}>
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', sm: 'block' }, fontSize: '0.68rem', fontWeight: 500 }}>
                 {isDemoRoute ? 'ISOLATED DEMO · Same backend via /demo' : 'MAIN · Automated Pure Structure EA'}
               </Typography>
             </Box>
@@ -190,22 +213,33 @@ export default function App() {
           {/* Center/Right Status and Actions */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 0.5 }}>
-              <Button size="small" href="/" variant={!isDemoRoute ? 'contained' : 'text'}>Main</Button>
-              <Button size="small" href="/demo" color="warning" variant={isDemoRoute ? 'contained' : 'text'}>Demo</Button>
+              <Button size="small" href="/" variant={!isDemoRoute ? 'contained' : 'text'} sx={{ borderRadius: 1.5 }}>Main</Button>
+              <Button size="small" href="/demo" color="warning" variant={isDemoRoute ? 'contained' : 'text'} sx={{ borderRadius: 1.5 }}>Demo</Button>
             </Box>
             {lastRefresh && (
-              <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', lg: 'block' } }}>
-                อัปเดต {lastRefresh.toLocaleTimeString('th-TH')}
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', lg: 'block' }, fontWeight: 500 }}>
+                Updated {lastRefresh.toLocaleTimeString('en-US')}
               </Typography>
             )}
 
             {/* Refresh Button */}
-            <Tooltip title="รีเฟรชข้อมูล">
-              <IconButton onClick={() => fetchAll(false)} disabled={loading} size="small" sx={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+            <Tooltip title="Refresh data">
+              <IconButton onClick={() => fetchAll(false)} disabled={loading} size="small" sx={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 1.5 }}>
                 {loading
                   ? <CircularProgress size={18} sx={{ color: 'text.secondary' }} />
                   : <RefreshIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
                 }
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title={accessKeyConfigured ? 'Dashboard access key is set for this session' : 'Set dashboard access key'}>
+              <IconButton
+                onClick={() => setAccessKeyOpen(true)}
+                size="small"
+                color={accessKeyConfigured ? 'success' : 'default'}
+                sx={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 1.5 }}
+              >
+                <KeyIcon sx={{ fontSize: 18 }} />
               </IconButton>
             </Tooltip>
 
@@ -217,9 +251,10 @@ export default function App() {
                 sx={{
                   bgcolor: account.profit >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(244,63,94,0.12)',
                   color:   account.profit >= 0 ? '#10b981' : '#f43f5e',
-                  fontWeight: 700,
+                  fontWeight: 800,
                   fontSize: '0.75rem',
                   px: 0.5,
+                  borderRadius: 1.5
                 }}
               />
             )}
@@ -240,23 +275,7 @@ export default function App() {
                 }}
               >
                 <Webhook sx={{ mr: { xs: 0, md: 1 }, fontSize: 20 }} />
-                <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>คู่มือการตั้งค่า</Box>
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={() => setHistoryOpen(true)}
-                sx={{
-                  minWidth: { xs: 40, md: 'auto' },
-                  px: { xs: 1, md: 2 },
-                  borderRadius: 2,
-                  fontSize: '0.8rem',
-                  borderColor: 'rgba(255,255,255,0.08)',
-                  color: 'text.primary',
-                  '&:hover': { borderColor: 'rgba(255,255,255,0.2)', bgcolor: 'rgba(255,255,255,0.02)' }
-                }}
-              >
-                <HistoryIcon sx={{ mr: { xs: 0, md: 1 }, fontSize: 20 }} />
-                <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>ประวัติการเทรด</Box>
+                <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>Setup Guide</Box>
               </Button>
               <Button
                 variant="contained"
@@ -266,17 +285,17 @@ export default function App() {
                 size="medium"
                 sx={{
                   minWidth: { xs: 40, md: 'auto' },
-                  px: { xs: 1, md: 2 },
+                  px: { xs: 1.5, md: 2 },
                   borderRadius: 2,
                   fontSize: '0.8rem',
-                  fontWeight: 700,
+                  fontWeight: 800,
                   background: connected ? undefined : 'linear-gradient(135deg,#6366f1,#4f46e5)',
                   boxShadow: connected ? undefined : '0 4px 12px rgba(99,102,241,0.2)',
                 }}
               >
-                {connected ? <LinkOff sx={{ mr: { xs: 0, md: 1 }, fontSize: 20 }} /> : <LinkIcon sx={{ mr: { xs: 0, md: 1 }, fontSize: 20 }} />}
+                {connected ? <LinkOff sx={{ mr: { xs: 0, md: 1 }, fontSize: 18 }} /> : <LinkIcon sx={{ mr: { xs: 0, md: 1 }, fontSize: 18 }} />}
                 <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>
-                  {connected ? 'ยกเลิกเชื่อมต่อ' : 'เชื่อมต่อ MT5'}
+                  {connected ? 'Disconnect MT5' : 'Connect MT5'}
                 </Box>
               </Button>
             </Box>
@@ -289,30 +308,29 @@ export default function App() {
         component="main"
         sx={{
           flexGrow: 1,
-          px: { xs: 2, sm: 4 },
+          px: { xs: 2, sm: 3, md: 4 },
           pb: { xs: 4, sm: 6 },
           pt: { xs: 11, sm: 12 },
           minHeight: '100vh',
           bgcolor: 'background.default',
-          backgroundImage: isDemoRoute ? 'linear-gradient(180deg,rgba(245,158,11,0.055),transparent 360px)' : 'none',
+          backgroundImage: isDemoRoute ? 'linear-gradient(180deg,rgba(245,158,11,0.035),transparent 360px)' : 'none',
         }}
       >
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5, maxWidth: '1440px', mx: 'auto' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5, width: '100%', maxWidth: '1680px', mx: 'auto' }}>
           {instanceMismatch && (
-            <Alert severity="error" variant="filled">
-              <strong>หยุดใช้งาน:</strong> หน้านี้ต้องเชื่อมต่อ Backend <code>{expectedInstance}</code> แต่ได้รับข้อมูลจาก
-              <code style={{ marginLeft: 6 }}>{status.instance}</code> กรุณาตรวจค่า URL ก่อนส่งคำสั่งเทรด
+            <Alert severity="error" variant="filled" sx={{ borderRadius: 2.5 }}>
+              <strong>Instance Mismatch:</strong> Page requires backend <code>{expectedInstance}</code> but received data from
+              <code style={{ marginLeft: 6 }}>{status.instance}</code>. Please check your URL configuration.
             </Alert>
           )}
           {isDemoRoute && (
-            <Alert severity="warning" variant="outlined" sx={{ borderWidth: 2 }}>
-              <strong>พื้นที่ทดสอบแยกจากระบบหลัก</strong> — Dashboard นี้อ่านและส่งคำสั่งเฉพาะ Backend
-              <code style={{ marginLeft: 6 }}>{apiClient.baseUrl}</code> และ Webhook
+            <Alert severity="warning" variant="outlined" sx={{ borderWidth: 2, borderRadius: 2.5 }}>
+              <strong>Isolated Test Environment</strong> — This dashboard reads and sends commands to backend
+              <code style={{ marginLeft: 6 }}>{apiClient.baseUrl}</code> and Webhook
               <code style={{ marginLeft: 6 }}>{apiClient.baseUrl}/webhook</code>
             </Alert>
           )}
           
-          {/* 1. Quick Statistics Strip */}
           <QuickOverview
             connected={connected}
             account={account}
@@ -321,19 +339,37 @@ export default function App() {
             risk={risk}
           />
 
-          {/* Trade Analytics (Equity Curve & Session) */}
-          <TradeAnalytics signals={history} initialCapital={300} />
+          <PositionsTable positions={positions} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={instanceMismatch} />
 
-          {/* 2. Main content layout */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5 }}>
-            {/* Active Positions */}
-            <PositionsTable positions={positions} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={instanceMismatch} />
-            
-            {/* Signals Tracker */}
-            <SignalsTracker signals={signals} loading={loading} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={instanceMismatch} />
-          </Box>
+          <SignalsTracker signals={signals} loading={loading} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={instanceMismatch} />
         </Box>
       </Box>
+
+      <Dialog open={accessKeyOpen} onClose={() => setAccessKeyOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Dashboard access key</DialogTitle>
+        <DialogContent>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            The key stays only in this browser-tab session and is never included in the website bundle.
+          </Alert>
+          <TextField
+            autoFocus
+            fullWidth
+            type="password"
+            label="X-Dashboard-Access-Key"
+            placeholder="Paste your access key"
+            value={accessKeyInput}
+            onChange={(event) => setAccessKeyInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && accessKeyInput.trim()) saveAccessKey();
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          {accessKeyConfigured && <Button color="error" onClick={clearAccessKey}>Clear</Button>}
+          <Button onClick={() => setAccessKeyOpen(false)}>Cancel</Button>
+          <Button variant="contained" disabled={!accessKeyInput.trim()} onClick={saveAccessKey}>Save for session</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* --- Guide Dialog Popup --- */}
       <Dialog
@@ -352,7 +388,7 @@ export default function App() {
         }}
       >
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
-          <Typography variant="h6" sx={{ fontWeight: 800 }}>คู่มือระบบ & การทำงาน</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 800 }}>System & Setup Guide</Typography>
           <IconButton onClick={() => setGuideOpen(false)} size="small" sx={{ color: 'text.secondary' }}>
             <CloseIcon />
           </IconButton>
@@ -362,7 +398,7 @@ export default function App() {
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button variant="contained" onClick={() => setGuideOpen(false)} sx={{ px: 3, borderRadius: 1.5 }}>
-            ปิดหน้าต่าง
+            Close
           </Button>
         </DialogActions>
       </Dialog>
@@ -384,7 +420,7 @@ export default function App() {
         }}
       >
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
-          <Typography variant="h6" sx={{ fontWeight: 800 }}>ประวัติการทำรายการล่าสุด</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 800 }}>Trade History Log</Typography>
           <IconButton onClick={() => setHistoryOpen(false)} size="small" sx={{ color: 'text.secondary' }}>
             <CloseIcon />
           </IconButton>
@@ -394,7 +430,7 @@ export default function App() {
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button variant="contained" onClick={() => setHistoryOpen(false)} sx={{ px: 3, borderRadius: 1.5 }}>
-            ปิดหน้าต่าง
+            Close
           </Button>
         </DialogActions>
       </Dialog>

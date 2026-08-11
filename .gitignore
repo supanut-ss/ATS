@@ -103,6 +103,7 @@ scratch/
 deploy.local.ps1
 upload-ftp.local.ps1
 tradingview/*.set
+tradingview/DemoAnalyticsSecret.local.mqh
 
 # vercel
 .vercel
@@ -154,3 +155,8 @@ deploy/
 backend/wwwroot/assets/
 backend/wwwroot/*.br
 backend/wwwroot/*.gz
+
+# Backtest files
+backtests/
+
+tradingview/Adaptive_SR_Dashboard_EA.ex5

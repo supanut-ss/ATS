@@ -117,6 +117,8 @@ npm run dev
 | POST | `/api/modify/<ticket>` | Modify SL/TP |
 | POST | `/api/connect` | Connect MT5 |
 | POST | `/api/disconnect` | Disconnect MT5 |
+| POST | `/demo/api/trade-analytics` | รับข้อมูลวิเคราะห์รายไม้จาก EA Demo |
+| GET | `/demo/api/trade-analytics?limit=100` | อ่านข้อมูลรายไม้ล่าสุดสำหรับวิเคราะห์ |
 
 ---
 
@@ -166,6 +168,38 @@ Demo API and webhook requests return `503` when `appsettings.Demo.json`,
 uses `signals`, `webhook_logs`, and `account_snapshots`; Demo uses the isolated
 `demo_signals`, `demo_webhook_logs`, and `demo_account_snapshots` tables in the
 same database. No additional firewall port or TLS endpoint is required.
+
+### EA per-trade analytics webhook (Demo/Test only)
+
+`Adaptive_SR_Dashboard_EA.mq5` v1.90 sends one idempotent record after each
+Demo trade closes to `/demo/api/trade-analytics`. It records the market and
+strategy context needed to investigate wins, losses, and losing streaks. The
+feature is disabled by default and never sends an MT5 login or password.
+
+1. For an existing database, run the idempotent `DemoSchemaUpgrade` tool. It
+   repairs partial v1.88 upgrades and applies the v1.89/v1.90 identity and time
+   metadata migrations. Fresh databases can use `backend/sql/create_tables.sql`.
+2. Create `backend/appsettings.Demo.json` from the example and set a unique
+   `DemoWebhookSettings:Secret`.
+3. In MT5, add the API host (for example `http://localhost:5000`) under
+   **Tools > Options > Expert Advisors > Allow WebRequest for listed URL**.
+4. The EA defaults to `https://ats.thaipesleague.com/demo`, but analytics is off
+   and `InpAnalyticsToken` is empty in the compiled EX5. Paste the rotated Demo
+   webhook key into MT5 Inputs, then enable `InpEnableDemoAnalytics`. Never put a
+   token in MQ5 source or a committed `.set` file.
+5. Use an MT5 Demo account. The EA refuses to enable this webhook on a live
+   account. During Strategy Tester runs, sending is skipped automatically.
+
+The record contains Support BUY/Resistance SELL, entry/exit time and price,
+volume, original SL/TP, gross and net result, commission, swap, MFE, MAE,
+spread, ATR, market regime, session, loss streak before entry, exit reason,
+level/pivot context, broker UTC offset, data-quality marker, EA version, and a
+settings signature. `(account_ref, position_id)` is the idempotency key, so two
+accounts cannot overwrite one another and retries update the same trade. The
+main `/api/trade-analytics` route rejects writes; only the isolated Demo path
+accepts them. Analytics reads and dashboard trade controls require their
+separate read/write access keys. Win rate and streak summaries should be
+calculated from these per-trade records.
 
 ## Strategy & EA Parameters Reference (ATS_MT5_EA.mq5)
 
