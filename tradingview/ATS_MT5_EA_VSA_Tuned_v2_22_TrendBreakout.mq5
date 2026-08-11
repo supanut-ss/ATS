@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright   "Copyright 2026, Antigravity AI"
 #property link        "https://ats.info.com"
-#property version     "2.22"
-#property description "ATS MT5 EA v2.22 - Counter-trend baseline with confirmed trend breakout"
+#property version     "2.23"
+#property description "ATS MT5 EA v2.23 - 6M best-profit preset: confirmed TrendBreakout and BE 8000/5000"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -45,13 +45,21 @@ input int      InpFVGMaxAgeBars         = 48;                    // Maximum acti
 input int      InpOBMaxAgeBars          = 48;                    // Maximum active age for an order-block zone
 
 input group "== Confirmed Trend Breakout Entry ==="
-input bool     InpUseTrendBreakout             = false;          // OFF by default; matched A/B test favored the Counter-only baseline
-input int      InpBreakoutConfirmBars          = 2;              // Consecutive closed bars beyond the confirmed pivot
-input double   InpBreakoutMinBodyATR           = 0.50;           // First breakout candle body must be at least this ATR multiple
-input double   InpBreakoutMaxExtensionATR      = 0.75;           // Skip if confirmation close is already too far from the pivot
+input bool     InpUseTrendBreakout             = true;           // Enable a continuation path for trends that do not pull back
+input int      InpBreakoutConfirmBars          = 2;              // Require the proven two-bar breakout confirmation by default
+input double   InpBreakoutMinBodyATR           = 0.50;           // Require directional momentum on the breakout candle
+input double   InpBreakoutMaxExtensionATR      = 0.75;           // Avoid chasing an overextended breakout
 input double   InpBreakoutMaxCloseWickRatio    = 0.25;           // Breakout candle must close near its directional edge
 input bool     InpBreakoutRequireHTFAlignment  = true;           // Enabled H1/H4 trends must agree with the breakout
 input bool     InpBreakoutAllowVolumeSpike     = true;           // Allow momentum volume; configured news windows still block entry
+
+input group "== Breakout Failure & Reclaim Retry ==="
+input bool     InpUseFailedBreakoutExit        = false;          // Experimental: exit a fresh breakout that closes back through its pivot
+input int      InpFailedBreakoutWindowBars     = 3;              // Only evaluate failure during the first N closed bars
+input double   InpFailedBreakoutBufferATR      = 0.10;           // Required close-through buffer beyond the broken pivot
+input bool     InpUseBreakoutReentry           = false;          // Experimental: allow one reclaim after a failed breakout exit
+input int      InpBreakoutReentryWindowBars    = 6;              // Reclaim must occur within this many bars after failure
+input double   InpBreakoutReentryMinBodyATR    = 0.50;           // Minimum reclaim candle body relative to ATR
 
 input group "== Scalping Risk =="
 input bool     InpUseFixedSL           = true;                  // เปิดใช้งานการตั้งค่า Stop Loss แบบคงที่
@@ -191,6 +199,76 @@ string GetAnalyticsPrefix()
 string GetAnalyticsKey(const string metric, const ulong ticket)
 {
    return GetAnalyticsPrefix() + metric + "_" + IntegerToString(ticket);
+}
+
+string GetBreakoutRetryPrefix()
+{
+   return "ATS_BR_" + IntegerToString(InpMagic) + "_" + Symbol() + "_";
+}
+
+void ClearBreakoutRetryState()
+{
+   string prefix = GetBreakoutRetryPrefix();
+   GlobalVariableDel(prefix + "DIR");
+   GlobalVariableDel(prefix + "LEVEL");
+   GlobalVariableDel(prefix + "EXPIRES");
+   GlobalVariableDel(prefix + "USES");
+   GlobalVariablesFlush();
+}
+
+void SetBreakoutRetryState(const int direction, const double level)
+{
+   if(!InpUseTrendBreakout || !InpUseBreakoutReentry
+      || (direction != 1 && direction != -1) || level <= 0.0)
+   {
+      ClearBreakoutRetryState();
+      return;
+   }
+
+   int period_seconds = PeriodSeconds(Period());
+   if(period_seconds <= 0) period_seconds = 300;
+   datetime expires_at = TimeCurrent() + InpBreakoutReentryWindowBars * period_seconds;
+   string prefix = GetBreakoutRetryPrefix();
+   GlobalVariableSet(prefix + "DIR", (double)direction);
+   GlobalVariableSet(prefix + "LEVEL", level);
+   GlobalVariableSet(prefix + "EXPIRES", (double)expires_at);
+   GlobalVariableSet(prefix + "USES", 1.0);
+   GlobalVariablesFlush();
+   Print("ATS EA: Breakout reclaim retry armed direction=", direction,
+         " level=", DoubleToString(level, (int)SymbolInfoInteger(Symbol(), SYMBOL_DIGITS)),
+         " expires=", TimeToString(expires_at));
+}
+
+bool GetBreakoutRetryState(int &direction, double &level)
+{
+   direction = 0;
+   level = 0.0;
+   if(!InpUseTrendBreakout || !InpUseBreakoutReentry)
+      return false;
+
+   string prefix = GetBreakoutRetryPrefix();
+   if(!GlobalVariableCheck(prefix + "DIR")
+      || !GlobalVariableCheck(prefix + "LEVEL")
+      || !GlobalVariableCheck(prefix + "EXPIRES")
+      || !GlobalVariableCheck(prefix + "USES"))
+      return false;
+
+   datetime expires_at = (datetime)GlobalVariableGet(prefix + "EXPIRES");
+   int uses_remaining = (int)GlobalVariableGet(prefix + "USES");
+   if(uses_remaining <= 0 || TimeCurrent() > expires_at)
+   {
+      ClearBreakoutRetryState();
+      return false;
+   }
+
+   direction = (int)GlobalVariableGet(prefix + "DIR");
+   level = GlobalVariableGet(prefix + "LEVEL");
+   if((direction != 1 && direction != -1) || level <= 0.0)
+   {
+      ClearBreakoutRetryState();
+      return false;
+   }
+   return true;
 }
 
 enum ENUM_SIGNAL_CLAIM_RESULT
@@ -822,6 +900,9 @@ void SyncPositionsWithBackend()
          string chop_key = GetAnalyticsKey("CHOP", analytics_identity);
          string atr_key = GetAnalyticsKey("ATR", analytics_identity);
          string low_vol_key = GetAnalyticsKey("LOW_VOL", analytics_identity);
+         string breakout_level_key = GetAnalyticsKey("BO_LEVEL", analytics_identity);
+         string breakout_entry_time_key = GetAnalyticsKey("BO_ENTRY_TIME", analytics_identity);
+         string breakout_retry_key = GetAnalyticsKey("BO_RETRY", analytics_identity);
          double max_price = tracked_positions[j].open_price;
          double min_price = tracked_positions[j].open_price;
          if(GlobalVariableCheck(max_price_key)) max_price = GlobalVariableGet(max_price_key);
@@ -858,6 +939,9 @@ void SyncPositionsWithBackend()
          if(GlobalVariableCheck(chop_key)) GlobalVariableDel(chop_key);
          if(GlobalVariableCheck(atr_key)) GlobalVariableDel(atr_key);
          if(GlobalVariableCheck(low_vol_key)) GlobalVariableDel(low_vol_key);
+         if(GlobalVariableCheck(breakout_level_key)) GlobalVariableDel(breakout_level_key);
+         if(GlobalVariableCheck(breakout_entry_time_key)) GlobalVariableDel(breakout_entry_time_key);
+         if(GlobalVariableCheck(breakout_retry_key)) GlobalVariableDel(breakout_retry_key);
          
          RemoveTrackedPosition(j);
       }
@@ -1243,6 +1327,65 @@ bool IsConfirmedTrendBreakout(const int direction,
 }
 
 //+------------------------------------------------------------------+
+//| Confirm one fresh reclaim of a pivot after a failed breakout.    |
+//| Only closed bars are used; the previous close must be inside and |
+//| the latest close must reclaim the level with directional body.   |
+//+------------------------------------------------------------------+
+bool IsConfirmedBreakoutReentry(const int direction,
+                                const double level,
+                                double &closes[],
+                                double &opens[],
+                                double &highs[],
+                                double &lows[],
+                                double &extension_atr)
+{
+   extension_atr = 0.0;
+   if(!InpUseTrendBreakout || !InpUseBreakoutReentry
+      || (direction != 1 && direction != -1) || level <= 0.0)
+      return false;
+   if(ArraySize(closes) <= 2 || ArraySize(opens) <= 1
+      || ArraySize(highs) <= 1 || ArraySize(lows) <= 1)
+      return false;
+
+   if(direction > 0)
+   {
+      if(closes[2] > level || closes[1] <= level)
+         return false;
+   }
+   else
+   {
+      if(closes[2] < level || closes[1] >= level)
+         return false;
+   }
+
+   double atr_value = 0.0;
+   if(!GetATRValueAtShift(1, atr_value))
+      return false;
+
+   double candle_range = highs[1] - lows[1];
+   if(candle_range <= 0.0)
+      return false;
+
+   double directional_body = direction > 0
+                             ? closes[1] - opens[1]
+                             : opens[1] - closes[1];
+   if(directional_body <= 0.0
+      || directional_body / atr_value < InpBreakoutReentryMinBodyATR)
+      return false;
+
+   double close_wick_ratio = direction > 0
+                             ? (highs[1] - closes[1]) / candle_range
+                             : (closes[1] - lows[1]) / candle_range;
+   if(close_wick_ratio > InpBreakoutMaxCloseWickRatio)
+      return false;
+
+   extension_atr = direction > 0
+                   ? (closes[1] - level) / atr_value
+                   : (level - closes[1]) / atr_value;
+   return extension_atr >= 0.0 && extension_atr <= InpBreakoutMaxExtensionATR;
+}
+
+//+------------------------------------------------------------------+
 //| CalculateChoppiness: Calculate Choppiness Index (0-100)          |
 //+------------------------------------------------------------------+
 double CalculateChoppiness(int len)
@@ -1608,6 +1751,83 @@ void InitStateFromHistory()
 }
 
 //+------------------------------------------------------------------+
+//| Close a fresh breakout that fails back through its broken pivot. |
+//| The broker-side hard SL remains active if data or close fails.    |
+//+------------------------------------------------------------------+
+bool ManageFailedBreakoutExit(const double closed_price)
+{
+   if(!InpUseFailedBreakoutExit || GetPositionCount() == 0)
+      return false;
+
+   double atr_value = 0.0;
+   if(!GetATRValueAtShift(1, atr_value))
+      return false;
+
+   int period_seconds = PeriodSeconds(Period());
+   if(period_seconds <= 0) period_seconds = 300;
+   double failure_buffer = InpFailedBreakoutBufferATR * atr_value;
+   bool closed_any = false;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      string symbol = PositionGetSymbol(i);
+      if(symbol != Symbol() || PositionGetInteger(POSITION_MAGIC) != InpMagic)
+         continue;
+
+      ulong ticket = (ulong)PositionGetInteger(POSITION_TICKET);
+      ulong analytics_identity = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      if(analytics_identity == 0) analytics_identity = ticket;
+      string level_key = GetAnalyticsKey("BO_LEVEL", analytics_identity);
+      if(!GlobalVariableCheck(level_key))
+         continue;
+
+      double breakout_level = GlobalVariableGet(level_key);
+      if(breakout_level <= 0.0)
+         continue;
+
+      datetime opened_at = (datetime)PositionGetInteger(POSITION_TIME);
+      int held_bars = (int)((TimeCurrent() - opened_at) / period_seconds);
+      if(held_bars < 1 || held_bars > InpFailedBreakoutWindowBars)
+         continue;
+
+      long position_type = PositionGetInteger(POSITION_TYPE);
+      bool is_buy = position_type == POSITION_TYPE_BUY;
+      bool failed = is_buy
+                    ? closed_price < breakout_level - failure_buffer
+                    : closed_price > breakout_level + failure_buffer;
+      if(!failed)
+         continue;
+
+      Print("ATS EA: FAILED BREAKOUT EXIT #", ticket,
+            " ", is_buy ? "BUY" : "SELL",
+            " close=", DoubleToString(closed_price, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)),
+            " level=", DoubleToString(breakout_level, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)),
+            " bufferATR=", DoubleToString(InpFailedBreakoutBufferATR, 2),
+            " heldBars=", held_bars);
+
+      ResetLastError();
+      bool close_request_ok = trade.PositionClose(ticket);
+      if(IsTradeResultSuccessful(close_request_ok, "Failed breakout exit", ticket))
+      {
+         string retry_key = GetAnalyticsKey("BO_RETRY", analytics_identity);
+         bool was_retry = GlobalVariableCheck(retry_key);
+         if(!was_retry)
+            SetBreakoutRetryState(is_buy ? 1 : -1, breakout_level);
+         else
+         {
+            ClearBreakoutRetryState();
+            Print("ATS EA: Breakout retry exhausted after failed reclaim #", ticket);
+         }
+         GlobalVariableDel(level_key);
+         GlobalVariableDel(GetAnalyticsKey("BO_ENTRY_TIME", analytics_identity));
+         GlobalVariableDel(retry_key);
+         closed_any = true;
+      }
+   }
+   return closed_any;
+}
+
+//+------------------------------------------------------------------+
 //| Confirmed soft exit. Hard SL remains active at the broker.       |
 //+------------------------------------------------------------------+
 bool ManageEarlyExit(double closed_price,
@@ -1879,8 +2099,10 @@ void ExecuteStrategyLogic()
                             : (InpExitOnOppositeCHoCH && choch_bear) ? "Bearish CHoCH" : "H1/H4 Reversal";
    string sell_exit_reason = (InpExitOnStructureBreak && sell_structure_break) ? "Structure Break"
                              : (InpExitOnOppositeCHoCH && choch_bull) ? "Bullish CHoCH" : "H1/H4 Reversal";
+   bool failed_breakout_closed = ManageFailedBreakoutExit(cc);
    bool early_exit_closed = ManageEarlyExit(cc, buy_bad_signal, sell_bad_signal,
                                             buy_exit_reason, sell_exit_reason);
+   bool position_closed_this_bar = failed_breakout_closed || early_exit_closed;
 
    // 10. Entry conditions (one trade at a time, frequent entries)
    bool no_pos = (GetPositionCount()==0);
@@ -1974,8 +2196,6 @@ void ExecuteStrategyLogic()
 
      int cooldown_remaining = 0;
      bool loss_cooldown_blocked = IsLossCooldownActive(Symbol(), cooldown_remaining);
-     if(loss_cooldown_blocked)
-        Print("ATS EA: Entry blocked by Loss Cooldown (", cooldown_remaining, " minutes remaining)");
 
      double bull_breakout_extension_atr = 0.0;
      double bear_breakout_extension_atr = 0.0;
@@ -1986,19 +2206,41 @@ void ExecuteStrategyLogic()
                                      && IsConfirmedTrendBreakout(-1, last_pl, cl, op, hi, lo,
                                                                   bear_breakout_extension_atr);
 
+     int retry_direction = 0;
+     double retry_level = 0.0;
+     bool retry_state_active = GetBreakoutRetryState(retry_direction, retry_level);
+     double bull_retry_extension_atr = 0.0;
+     double bear_retry_extension_atr = 0.0;
+     bool bull_retry_confirmed = retry_state_active && retry_direction == 1 && trend == 1
+                                 && IsConfirmedBreakoutReentry(1, retry_level, cl, op, hi, lo,
+                                                               bull_retry_extension_atr);
+     bool bear_retry_confirmed = retry_state_active && retry_direction == -1 && trend == -1
+                                 && IsConfirmedBreakoutReentry(-1, retry_level, cl, op, hi, lo,
+                                                               bear_retry_extension_atr);
+     if(bull_retry_confirmed) bull_breakout_extension_atr = bull_retry_extension_atr;
+     if(bear_retry_confirmed) bear_breakout_extension_atr = bear_retry_extension_atr;
+
+     bool retry_signal_confirmed = bull_retry_confirmed || bear_retry_confirmed;
+     if(loss_cooldown_blocked && !retry_signal_confirmed)
+        Print("ATS EA: Entry blocked by Loss Cooldown (", cooldown_remaining, " minutes remaining)");
+
      bool breakout_long_htf_ok = InpBreakoutRequireHTFAlignment ? long_htf_aligned : lok;
      bool breakout_short_htf_ok = InpBreakoutRequireHTFAlignment ? short_htf_aligned : sok;
-     bool common_entry_ok = no_pos && !early_exit_closed && !sideway_blocked
-                            && !in_force_close && !daily_loss_blocked && !loss_cooldown_blocked;
+     bool base_entry_ok = no_pos && !position_closed_this_bar && !sideway_blocked
+                          && !in_force_close && !daily_loss_blocked;
+     bool common_entry_ok = base_entry_ok && !loss_cooldown_blocked;
+     bool retry_entry_ok = base_entry_ok && retry_signal_confirmed;
 
      bool normalLongCond = (trend==1) && choch_long_ok && fvg_ob_bull && bull_pa
                            && ema_lc && lok && common_entry_ok && !normal_filter_blocked;
      bool normalShortCond = (trend==-1) && choch_short_ok && fvg_ob_bear && bear_pa
                             && ema_sc && sok && common_entry_ok && !normal_filter_blocked;
-     bool breakoutLongCond = bull_breakout_confirmed && ema_lc && breakout_long_htf_ok
-                             && common_entry_ok && !breakout_filter_blocked;
-     bool breakoutShortCond = bear_breakout_confirmed && ema_sc && breakout_short_htf_ok
-                              && common_entry_ok && !breakout_filter_blocked;
+     bool breakoutLongCond = ema_lc && breakout_long_htf_ok && !breakout_filter_blocked
+                             && ((bull_breakout_confirmed && common_entry_ok)
+                                 || (bull_retry_confirmed && retry_entry_ok));
+     bool breakoutShortCond = ema_sc && breakout_short_htf_ok && !breakout_filter_blocked
+                              && ((bear_breakout_confirmed && common_entry_ok)
+                                  || (bear_retry_confirmed && retry_entry_ok));
 
      // Breakout classification takes precedence when both paths become true on
      // the same bar; common_entry_ok still guarantees a single position.
@@ -2006,6 +2248,10 @@ void ExecuteStrategyLogic()
      bool shortCond = normalShortCond || breakoutShortCond;
      bool long_entry_is_breakout = breakoutLongCond;
      bool short_entry_is_breakout = breakoutShortCond;
+     bool long_entry_is_retry = breakoutLongCond && bull_retry_confirmed;
+     bool short_entry_is_retry = breakoutShortCond && bear_retry_confirmed;
+     double long_breakout_level = long_entry_is_retry ? retry_level : last_ph;
+     double short_breakout_level = short_entry_is_retry ? retry_level : last_pl;
 
    double pt        = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
    double tp_v      = InpTPPips * pt;
@@ -2041,7 +2287,7 @@ void ExecuteStrategyLogic()
            slp = a - (InpFixedSLPips * pt);
        } else {
            if(long_entry_is_breakout)
-              slp = last_ph - sl_buffer;
+              slp = long_breakout_level - sl_buffer;
            else
            {
               slp = swing_low - sl_buffer;
@@ -2054,12 +2300,16 @@ void ExecuteStrategyLogic()
       double atp=a+tp_v;
       if(!PrepareMarketStops(Symbol(), true, tk, slp, atp))
          return;
-      string buy_entry_tag = long_entry_is_breakout ? "BREAKOUT" : (in_bull_fvg?"FVG":in_bull_ob?"OB":"PD");
+      string buy_entry_tag = long_entry_is_retry ? "BREAKOUT_RETRY"
+                             : long_entry_is_breakout ? "BREAKOUT"
+                             : (in_bull_fvg?"FVG":in_bull_ob?"OB":"PD");
       Print("ATS EA: BUY | Ask=",a," SL=",slp," TP=",atp," Lot=",InpFixedLot,
             " Entry=",buy_entry_tag,
             long_entry_is_breakout ? StringFormat(" ExtensionATR=%.2f", bull_breakout_extension_atr) : "");
       ResetLastError();
-      string buy_comment = long_entry_is_breakout ? "ATS BUY[BREAKOUT]" : "ATS BUY[BOS+FVG/OB]";
+      string buy_comment = long_entry_is_retry ? "ATS BUY[BO_RETRY]"
+                           : long_entry_is_breakout ? "ATS BUY[BREAKOUT]"
+                           : "ATS BUY[BOS+FVG/OB]";
       bool buy_request_ok = trade.Buy(InpFixedLot, Symbol(), a, slp, atp, buy_comment);
       if(IsTradeResultSuccessful(buy_request_ok, "Strategy BUY"))
       {
@@ -2073,9 +2323,18 @@ void ExecuteStrategyLogic()
              GlobalVariableSet(GetAnalyticsKey("ADX", position_identifier), adx);
              GlobalVariableSet(GetAnalyticsKey("CHOP", position_identifier), chop);
              GlobalVariableSet(GetAnalyticsKey("ATR", position_identifier), atr_ratio);
+             if(long_entry_is_breakout)
+             {
+                GlobalVariableSet(GetAnalyticsKey("BO_LEVEL", position_identifier), long_breakout_level);
+                GlobalVariableSet(GetAnalyticsKey("BO_ENTRY_TIME", position_identifier), (double)TimeCurrent());
+                if(long_entry_is_retry)
+                   GlobalVariableSet(GetAnalyticsKey("BO_RETRY", position_identifier), 1.0);
+             }
+             GlobalVariablesFlush();
           }
           else
              Print("ATS EA WARNING: Cannot resolve BUY position identifier for analytics.");
+          ClearBreakoutRetryState();
           ClearBullishCHoCH();
       }
    }
@@ -2093,7 +2352,7 @@ void ExecuteStrategyLogic()
            slp = b + (InpFixedSLPips * pt);
        } else {
            if(short_entry_is_breakout)
-              slp = last_pl + sl_buffer;
+              slp = short_breakout_level + sl_buffer;
            else
            {
               slp = swing_high + sl_buffer;
@@ -2106,12 +2365,16 @@ void ExecuteStrategyLogic()
       double btp=b-tp_v;
       if(!PrepareMarketStops(Symbol(), false, tk, slp, btp))
          return;
-      string sell_entry_tag = short_entry_is_breakout ? "BREAKOUT" : (in_bear_fvg?"FVG":in_bear_ob?"OB":"PD");
+      string sell_entry_tag = short_entry_is_retry ? "BREAKOUT_RETRY"
+                              : short_entry_is_breakout ? "BREAKOUT"
+                              : (in_bear_fvg?"FVG":in_bear_ob?"OB":"PD");
       Print("ATS EA: SELL | Bid=",b," SL=",slp," TP=",btp," Lot=",InpFixedLot,
             " Entry=",sell_entry_tag,
             short_entry_is_breakout ? StringFormat(" ExtensionATR=%.2f", bear_breakout_extension_atr) : "");
       ResetLastError();
-      string sell_comment = short_entry_is_breakout ? "ATS SELL[BREAKOUT]" : "ATS SELL[BOS+FVG/OB]";
+      string sell_comment = short_entry_is_retry ? "ATS SELL[BO_RETRY]"
+                            : short_entry_is_breakout ? "ATS SELL[BREAKOUT]"
+                            : "ATS SELL[BOS+FVG/OB]";
       bool sell_request_ok = trade.Sell(InpFixedLot, Symbol(), b, slp, btp, sell_comment);
       if(IsTradeResultSuccessful(sell_request_ok, "Strategy SELL"))
       {
@@ -2125,9 +2388,18 @@ void ExecuteStrategyLogic()
              GlobalVariableSet(GetAnalyticsKey("ADX", position_identifier), adx);
              GlobalVariableSet(GetAnalyticsKey("CHOP", position_identifier), chop);
              GlobalVariableSet(GetAnalyticsKey("ATR", position_identifier), atr_ratio);
+             if(short_entry_is_breakout)
+             {
+                GlobalVariableSet(GetAnalyticsKey("BO_LEVEL", position_identifier), short_breakout_level);
+                GlobalVariableSet(GetAnalyticsKey("BO_ENTRY_TIME", position_identifier), (double)TimeCurrent());
+                if(short_entry_is_retry)
+                   GlobalVariableSet(GetAnalyticsKey("BO_RETRY", position_identifier), 1.0);
+             }
+             GlobalVariablesFlush();
           }
           else
              Print("ATS EA WARNING: Cannot resolve SELL position identifier for analytics.");
+          ClearBreakoutRetryState();
           ClearBearishCHoCH();
       }
    }
@@ -2276,6 +2548,20 @@ bool ValidateInputParameters()
       Print("ATS EA ERROR: Breakout requires ConfirmBars 1..10, positive ATR thresholds, and CloseWickRatio in [0,1].");
       return false;
    }
+   if(InpUseFailedBreakoutExit
+      && (InpFailedBreakoutWindowBars < 1
+          || InpFailedBreakoutBufferATR < 0.0
+          || InpFailedBreakoutBufferATR > 2.0))
+   {
+      Print("ATS EA ERROR: Failed breakout exit requires WindowBars >= 1 and BufferATR in [0,2].");
+      return false;
+   }
+   if(InpUseBreakoutReentry
+      && (InpBreakoutReentryWindowBars < 1 || InpBreakoutReentryMinBodyATR <= 0.0))
+   {
+      Print("ATS EA ERROR: Breakout re-entry requires WindowBars >= 1 and positive MinBodyATR.");
+      return false;
+   }
    if(InpSLBuffer < 0.0 || InpMaxSLPips <= 0 || (InpUseFixedSL && InpFixedSLPips <= 0))
    {
       Print("ATS EA ERROR: Stop parameters require non-negative buffer and positive SL distances.");
@@ -2421,8 +2707,8 @@ int OnInit()
       Print("ATS EA: Strategy Tester/optimization detected; timer and WebRequest calls are skipped.");
    else
       Print("ATS EA: Webhook polling timer disabled; local position synchronization remains enabled.");
-   Print("ATS EA v2.22 | Lot=",InpFixedLot," BE=",InpBEPips,"p Trail@",InpTrailLevel1Pips,"p->",InpTrailLevel1LockPips,"p TP=",InpTPPips,"p");
-   Print("ATS EA: Strategy = Counter-trend filter + pullback entry + confirmed trend breakout");
+   Print("ATS EA v2.23 | Lot=",InpFixedLot," BE=",InpBEPips,"p Trail@",InpTrailLevel1Pips,"p->",InpTrailLevel1LockPips,"p TP=",InpTPPips,"p");
+   Print("ATS EA: Strategy = Pullback baseline + one-bar continuation breakout + failed-breakout reclaim");
    return(INIT_SUCCEEDED);
 }
 
