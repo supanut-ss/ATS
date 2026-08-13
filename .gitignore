@@ -1,3 +1,6 @@
+# FTP deploy manifests (per-machine, per-server — do not commit)
+.manifests/
+
 # Logs
 logs
 *.log

@@ -13,7 +13,7 @@ import {
 
 const EA_PARAMETERS_TH = [
   { group: '== Connection Settings ==', param: 'InpEnableWebhookPolling', defaultVal: 'true', desc: 'เปิด/ปิด ระบบดึงสัญญาณเทรดผ่าน Webhook หลังบ้าน' },
-  { group: '== Connection Settings ==', param: 'InpBackendURL', defaultVal: 'https://ats.thaipesleague.com', desc: 'URL API หลังบ้านสำหรับดึงสัญญาณและส่งสถานะ (/demo สำหรับ Demo)' },
+  { group: '== Connection Settings ==', param: 'InpBackendURL', defaultVal: 'https://ats.thaipesleague.com', desc: 'URL API หลังบ้านสำหรับดึงสัญญาณและส่งสถานะ' },
   { group: '== Connection Settings ==', param: 'InpAuthToken', defaultVal: 'กำหนดใน MT5 Inputs', desc: 'โทเค็นลับยืนยันตัวตนกับหลังบ้าน' },
   { group: '== Connection Settings ==', param: 'InpPollInterval', defaultVal: '10000 (10 วินาที)', desc: 'รอบเวลาดึงข้อมูลจากหลังบ้าน (มิลลิวินาที)' },
 
@@ -58,7 +58,7 @@ const EA_PARAMETERS_TH = [
 
 const EA_PARAMETERS_EN = [
   { group: '== Connection Settings ==', param: 'InpEnableWebhookPolling', defaultVal: 'true', desc: 'Enable signal polling from backend' },
-  { group: '== Connection Settings ==', param: 'InpBackendURL', defaultVal: 'https://ats.thaipesleague.com', desc: 'Backend API URL for signals and status sync (add /demo for Demo)' },
+  { group: '== Connection Settings ==', param: 'InpBackendURL', defaultVal: 'https://ats.thaipesleague.com', desc: 'Backend API URL for signals and status sync' },
   { group: '== Connection Settings ==', param: 'InpAuthToken', defaultVal: 'Configured in MT5 Inputs', desc: 'Secret authentication token' },
   { group: '== Connection Settings ==', param: 'InpPollInterval', defaultVal: '10000 (10s)', desc: 'Polling interval in milliseconds' },
 
@@ -126,15 +126,14 @@ function CopyField({ label, value, copyText = 'Copy', copiedText = 'Copied!' }) 
   );
 }
 
-export default function WebhookGuide({ serverStatus, environment = 'main', backendUrl = '' }) {
+export default function WebhookGuide({ serverStatus, backendUrl = '' }) {
   const [lang, setLang] = useState('th'); // Default to Thai for Setup Guide
-  const isDemo = environment === 'demo';
 
   const rawBase = backendUrl || window.location.origin;
-  const cleanBase = rawBase.replace(/\/demo\/?$/, '').replace(/\/$/, '');
+  const cleanBase = rawBase.replace(/\/$/, '');
 
-  const localUrl = isDemo ? 'http://localhost:5000/demo' : 'http://localhost:5000';
-  const liveUrl  = isDemo ? `${cleanBase}/demo` : cleanBase;
+  const localUrl = 'http://localhost:5000';
+  const liveUrl  = cleanBase;
 
   const isTh = lang === 'th';
   const paramsList = isTh ? EA_PARAMETERS_TH : EA_PARAMETERS_EN;
@@ -198,32 +197,6 @@ export default function WebhookGuide({ serverStatus, environment = 'main', backe
         </ToggleButtonGroup>
       </Paper>
 
-      {isDemo && (
-        <Alert severity="warning" variant="outlined" sx={{ borderWidth: 2, borderRadius: 2.5 }}>
-          {isTh ? (
-            <>
-              <strong>คู่มือการตั้งค่า EA Adaptive_SR_Dashboard_EA.mq5 บนบัญชี Demo:</strong><br />
-              1. <strong>InpEnableDemoAnalytics:</strong> ต้องเปลี่ยนเป็น <code>true</code> (ค่าเริ่มต้นคือ false)<br />
-              2. <strong>InpAnalyticsBaseURL:</strong> <code>https://ats.thaipesleague.com/demo</code><br />
-              3. <strong>InpAnalyticsToken:</strong> <code>demo_sec_9f5c4b8e2a1d7f0e3c6b8a9f</code><br />
-              4. <strong>InpAnalyticsAccountRef:</strong> <code>demo-sr</code><br />
-              5. <strong>บัญชี MT5:</strong> ต้องเป็นบัญชี Demo เท่านั้น (หากสลับไปบัญชีจริง EA จะปิดการส่ง Analytics อัตโนมัติ)<br />
-              6. <strong>MT5 Allowed WebRequest URL:</strong> ใน Tools ➡️ Options ➡️ Expert Advisors ให้ใส่เฉพาะ <code>https://ats.thaipesleague.com</code> (ห้ามใส่ /demo ในหน้าต่าง Options)
-            </>
-          ) : (
-            <>
-              <strong>Adaptive_SR_Dashboard_EA.mq5 Demo Settings:</strong><br />
-              1. <strong>InpEnableDemoAnalytics:</strong> Set to <code>true</code> (default is false).<br />
-              2. <strong>InpAnalyticsBaseURL:</strong> <code>https://ats.thaipesleague.com/demo</code><br />
-              3. <strong>InpAnalyticsToken:</strong> <code>demo_sec_9f5c4b8e2a1d7f0e3c6b8a9f</code><br />
-              4. <strong>InpAnalyticsAccountRef:</strong> <code>demo-sr</code><br />
-              5. <strong>MT5 Account:</strong> Must be a Demo account.<br />
-              6. <strong>MT5 Allowed WebRequest:</strong> Add <code>https://ats.thaipesleague.com</code> in Tools ➡️ Options ➡️ Expert Advisors.
-            </>
-          )}
-        </Alert>
-      )}
-
       {/* --- Section 1: Guide Details --- */}
       <Paper sx={{ p: 3, border: '1px solid rgba(255,255,255,0.06)', bgcolor: 'background.paper' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
@@ -261,12 +234,6 @@ export default function WebhookGuide({ serverStatus, environment = 'main', backe
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mb: 3 }}>
           <CopyField label={isTh ? 'Backend Base URL (Local)' : 'Backend Base URL (Local)'} value={localUrl} copyText={isTh ? 'คัดลอก' : 'Copy'} copiedText={isTh ? 'คัดลอกแล้ว!' : 'Copied!'} />
           <CopyField label={isTh ? 'Backend Base URL (เซิร์ฟเวอร์จริง)' : 'Backend Base URL (Live Server)'} value={liveUrl} copyText={isTh ? 'คัดลอก' : 'Copy'} copiedText={isTh ? 'คัดลอกแล้ว!' : 'Copied!'} />
-          <CopyField
-            label={isDemo ? (isTh ? 'InpAuthToken สำหรับโหมด Demo' : 'InpAuthToken for Demo Mode') : (isTh ? 'InpAuthToken สำหรับโหมด Main' : 'InpAuthToken for Main Mode')}
-            value={isDemo ? 'demo_sec_9f5c4b8e2a1d7f0e3c6b8a9f' : 'ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f'}
-            copyText={isTh ? 'คัดลอก' : 'Copy'}
-            copiedText={isTh ? 'คัดลอกแล้ว!' : 'Copied!'}
-          />
           <CopyField label={isTh ? 'Webhook Endpoint URL' : 'Webhook Endpoint URL'} value={`${liveUrl}/webhook`} copyText={isTh ? 'คัดลอก' : 'Copy'} copiedText={isTh ? 'คัดลอกแล้ว!' : 'Copied!'} />
         </Box>
 
@@ -289,7 +256,7 @@ export default function WebhookGuide({ serverStatus, environment = 'main', backe
                     2. เลือกแท็บ <strong>Expert Advisors</strong><br />
                     3. ติ๊กถูกที่ช่อง <strong>Allow WebRequest for listed URL:</strong><br />
                     4. ดับเบิ้ลคลิกเพิ่มโดเมนหลังบ้านของคุณ (เช่น <code>https://ats.thaipesleague.com</code> หรือ <code>http://localhost:5000</code>)<br />
-                    <span style={{ color: '#f59e0b', fontWeight: 600 }}>⚠️ ข้อสำคัญ: ในหน้าต่าง Options ให้ใส่เฉพาะโดเมนหลักเท่านั้น (ห้ามใส่ /demo ในหน้าต่าง Options ให้ใส่ /demo เฉพาะตอนตั้งค่า InpBackendURL บนชาร์ตเท่านั้น)</span><br />
+                    <span style={{ color: '#f59e0b', fontWeight: 600 }}>⚠️ ข้อสำคัญ: ในหน้าต่าง Options ให้ใส่โดเมนหลักของ backend เท่านั้น</span><br />
                     5. กด <strong>OK</strong> เพื่อบันทึก
                   </>
                 ) : (
@@ -299,7 +266,7 @@ export default function WebhookGuide({ serverStatus, environment = 'main', backe
                     2. Open the <strong>Expert Advisors</strong> tab<br />
                     3. Check <strong>Allow WebRequest for listed URL:</strong><br />
                     4. Double-click to add your domain (e.g. <code>https://ats.thaipesleague.com</code> or <code>http://localhost:5000</code>)<br />
-                    <span style={{ color: '#f59e0b', fontWeight: 600 }}>⚠️ Note: In the Options dialog, add only the main domain (do NOT append /demo here. Add /demo only in the EA InpBackendURL parameter on the chart).</span><br />
+                    <span style={{ color: '#f59e0b', fontWeight: 600 }}>⚠️ Note: In the Options dialog, add only the backend domain.</span><br />
                     5. Click <strong>OK</strong> to save
                   </>
                 )}
@@ -359,7 +326,7 @@ export default function WebhookGuide({ serverStatus, environment = 'main', backe
                   <strong>InpEnableWebhookPolling</strong> ➡️ {isTh ? 'เปลี่ยนเป็น true (เปิดการรับสัญญาณผ่าน Webhook)' : 'Set to true (Enables signal polling)'}
                 </Box>
                 <Box sx={{ fontSize: '0.8rem', color: 'text.primary', borderLeft: '3px solid #6366f1', pl: 1.5 }}>
-                  <strong>InpBackendURL</strong> ➡️ {isTh ? 'ใส่ลิงก์ API หลังบ้านของคุณ (เช่น https://ats.thaipesleague.com หรือใส่ /demo สำหรับโหมด Demo)' : 'Enter your backend API URL (e.g. https://ats.thaipesleague.com or add /demo for Demo mode)'}
+                  <strong>InpBackendURL</strong> ➡️ {isTh ? 'ใส่ลิงก์ API หลังบ้านจริงของคุณ (เช่น https://ats.thaipesleague.com)' : 'Enter your live backend API URL (e.g. https://ats.thaipesleague.com)'}
                 </Box>
                 <Box sx={{ fontSize: '0.8rem', color: 'text.primary', borderLeft: '3px solid #6366f1', pl: 1.5 }}>
                   <strong>InpAuthToken</strong> ➡️ {isTh ? 'โทเค็นยืนยันตัวตนสำหรับเชื่อมต่อหลังบ้าน' : 'Auth token matching your backend configuration'}

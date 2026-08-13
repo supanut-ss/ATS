@@ -44,7 +44,7 @@ export default function AccountCard({ account, connected, onConnect, onDisconnec
     );
   }
 
-  /* ── Normal / Offline Fallback ── */
+  /* ── Normal / Offline state ── */
   const displayAccount = account || {
     name: 'MetaTrader 5',
     login: '—',
@@ -84,7 +84,7 @@ export default function AccountCard({ account, connected, onConnect, onDisconnec
           </Box>
           <Box sx={{ minWidth: 0 }}>
             <Typography sx={{ fontWeight: 700, fontSize: '0.95rem', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {displayAccount.name || 'Demo Account'}
+              {displayAccount.name || 'MetaTrader 5'}
             </Typography>
             <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary', whiteSpace: 'nowrap' }}>
               #{displayAccount.login} · {displayAccount.server} · {displayAccount.currency}
@@ -92,7 +92,6 @@ export default function AccountCard({ account, connected, onConnect, onDisconnec
           </Box>
         </Box>
         <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexShrink: 0 }}>
-          <Chip label="DEMO" size="small" sx={{ bgcolor: 'rgba(99,102,241,0.15)', color: '#818cf8', fontWeight: 700, fontSize: '0.62rem', height: 20 }} />
           {connected ? (
             <Chip
               label={<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>

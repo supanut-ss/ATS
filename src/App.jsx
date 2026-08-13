@@ -3,20 +3,14 @@ import {
   ThemeProvider, createTheme, CssBaseline, Box,
   AppBar, Toolbar, Typography, IconButton, Button, Tooltip, CircularProgress,
   Chip, Dialog, DialogTitle, DialogContent, DialogActions,
-  Alert, TextField, Grid, Paper,
+  Alert, TextField,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
   MonetizationOn,
   Webhook,
-  History as HistoryIcon,
-  Link as LinkIcon,
-  LinkOff,
   Close as CloseIcon,
   Key as KeyIcon,
-  Dns as DnsIcon,
-  CellTower as CellTowerIcon,
-  Speed as SpeedIcon,
 } from '@mui/icons-material';
 
 import PositionsTable    from './components/PositionsTable';
@@ -26,7 +20,7 @@ import SignalsTracker    from './components/SignalsTracker';
 import QuickOverview     from './components/QuickOverview';
 import WorldCupPredictions from './components/WorldCupPredictions';
 
-import { getApiClient } from './services/api';
+import { productionApi } from './services/api';
 
 const theme = createTheme({
   palette: {
@@ -70,9 +64,8 @@ const theme = createTheme({
 export default function App() {
   const requestedPath = window.location.pathname.replace(/\/$/, '') || '/';
   const currentPath = requestedPath === '/trade' ? '/' : requestedPath;
-  const isDemoRoute = currentPath === '/demo';
   const isTradeRoute = currentPath !== '/wc2026';
-  const apiClient = getApiClient(isDemoRoute);
+  const apiClient = productionApi;
 
   const [guideOpen, setGuideOpen]     = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -92,8 +85,6 @@ export default function App() {
   const [lastRefresh, setLastRefresh] = useState(null);
 
   const connected = status?.mt5_connected || false;
-  const expectedInstance = isDemoRoute ? 'demo' : 'main';
-  const instanceMismatch = Boolean(status?.instance && status.instance !== expectedInstance);
 
   const fetchAll = useCallback(async (isBackground = false) => {
     if (!isTradeRoute) return;
@@ -118,7 +109,7 @@ export default function App() {
   }, [isTradeRoute, apiClient]);
 
   useEffect(() => {
-    if (requestedPath === '/trade') {
+    if (requestedPath !== '/' && requestedPath !== '/wc2026') {
       window.location.replace('/');
       return;
     }
@@ -127,20 +118,6 @@ export default function App() {
     const id = setInterval(() => fetchAll(true), 5000);
     return () => clearInterval(id);
   }, [fetchAll, isTradeRoute, requestedPath]);
-
-  const handleConnect = async () => {
-    if (instanceMismatch) return;
-    const res = await apiClient.connectMT5();
-    if (res.ok) fetchAll();
-  };
-
-  const handleDisconnect = async () => {
-    if (instanceMismatch) return;
-    await apiClient.disconnectMT5();
-    setStatus(s => ({ ...s, mt5_connected: false }));
-    setAccount(null);
-    setPositions([]);
-  };
 
   const saveAccessKey = () => {
     apiClient.setAccessKey(accessKeyInput);
@@ -185,7 +162,7 @@ export default function App() {
         sx={{
           bgcolor: 'rgba(5, 7, 15, 0.75)',
           backdropFilter: 'blur(16px)',
-          borderBottom: isDemoRoute ? '2px solid rgba(245,158,11,0.65)' : '1px solid rgba(255,255,255,0.05)',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
           boxShadow: 'none',
         }}
       >
@@ -194,7 +171,7 @@ export default function App() {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <Box sx={{
               p: 0.7, borderRadius: 2,
-              background: isDemoRoute ? 'linear-gradient(135deg,#f59e0b,#ef4444)' : 'linear-gradient(135deg,#6366f1,#fbbf24)',
+              background: 'linear-gradient(135deg,#6366f1,#fbbf24)',
               display: 'flex',
               alignItems: 'center',
             }}>
@@ -202,20 +179,16 @@ export default function App() {
             </Box>
             <Box>
               <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1, fontSize: { xs: '1rem', sm: '1.15rem' }, background: 'linear-gradient(90deg,#FFE082,#FFB300)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                {isDemoRoute ? 'Script Test Dashboard' : 'XAUUSD Bot Dashboard'}
+                XAUUSD Bot Dashboard
               </Typography>
               <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', sm: 'block' }, fontSize: '0.68rem', fontWeight: 500 }}>
-                {isDemoRoute ? 'ISOLATED DEMO · Same backend via /demo' : 'MAIN · Automated Pure Structure EA'}
+                LIVE · Automated Pure Structure EA
               </Typography>
             </Box>
           </Box>
 
           {/* Center/Right Status and Actions */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 0.5 }}>
-              <Button size="small" href="/" variant={!isDemoRoute ? 'contained' : 'text'} sx={{ borderRadius: 1.5 }}>Main</Button>
-              <Button size="small" href="/demo" color="warning" variant={isDemoRoute ? 'contained' : 'text'} sx={{ borderRadius: 1.5 }}>Demo</Button>
-            </Box>
             {lastRefresh && (
               <Typography variant="caption" sx={{ color: 'text.secondary', display: { xs: 'none', lg: 'block' }, fontWeight: 500 }}>
                 Updated {lastRefresh.toLocaleTimeString('en-US')}
@@ -277,27 +250,12 @@ export default function App() {
                 <Webhook sx={{ mr: { xs: 0, md: 1 }, fontSize: 20 }} />
                 <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>Setup Guide</Box>
               </Button>
-              <Button
-                variant="contained"
-                onClick={connected ? handleDisconnect : handleConnect}
-                disabled={instanceMismatch}
-                color={connected ? 'error' : 'primary'}
-                size="medium"
-                sx={{
-                  minWidth: { xs: 40, md: 'auto' },
-                  px: { xs: 1.5, md: 2 },
-                  borderRadius: 2,
-                  fontSize: '0.8rem',
-                  fontWeight: 800,
-                  background: connected ? undefined : 'linear-gradient(135deg,#6366f1,#4f46e5)',
-                  boxShadow: connected ? undefined : '0 4px 12px rgba(99,102,241,0.2)',
-                }}
-              >
-                {connected ? <LinkOff sx={{ mr: { xs: 0, md: 1 }, fontSize: 18 }} /> : <LinkIcon sx={{ mr: { xs: 0, md: 1 }, fontSize: 18 }} />}
-                <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>
-                  {connected ? 'Disconnect MT5' : 'Connect MT5'}
-                </Box>
-              </Button>
+              <Chip
+                label={connected ? 'MT5 LIVE' : 'MT5 OFFLINE'}
+                color={connected ? 'success' : 'default'}
+                size="small"
+                sx={{ fontWeight: 800 }}
+              />
             </Box>
           </Box>
         </Toolbar>
@@ -313,24 +271,10 @@ export default function App() {
           pt: { xs: 11, sm: 12 },
           minHeight: '100vh',
           bgcolor: 'background.default',
-          backgroundImage: isDemoRoute ? 'linear-gradient(180deg,rgba(245,158,11,0.035),transparent 360px)' : 'none',
+          backgroundImage: 'none',
         }}
       >
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5, width: '100%', maxWidth: '1680px', mx: 'auto' }}>
-          {instanceMismatch && (
-            <Alert severity="error" variant="filled" sx={{ borderRadius: 2.5 }}>
-              <strong>Instance Mismatch:</strong> Page requires backend <code>{expectedInstance}</code> but received data from
-              <code style={{ marginLeft: 6 }}>{status.instance}</code>. Please check your URL configuration.
-            </Alert>
-          )}
-          {isDemoRoute && (
-            <Alert severity="warning" variant="outlined" sx={{ borderWidth: 2, borderRadius: 2.5 }}>
-              <strong>Isolated Test Environment</strong> — This dashboard reads and sends commands to backend
-              <code style={{ marginLeft: 6 }}>{apiClient.baseUrl}</code> and Webhook
-              <code style={{ marginLeft: 6 }}>{apiClient.baseUrl}/webhook</code>
-            </Alert>
-          )}
-          
           <QuickOverview
             connected={connected}
             account={account}
@@ -339,9 +283,9 @@ export default function App() {
             risk={risk}
           />
 
-          <PositionsTable positions={positions} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={instanceMismatch} />
+          <PositionsTable positions={positions} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={false} />
 
-          <SignalsTracker signals={signals} loading={loading} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={instanceMismatch} />
+          <SignalsTracker signals={signals} loading={loading} onRefresh={fetchAll} apiClient={apiClient} actionsDisabled={false} />
         </Box>
       </Box>
 
@@ -394,7 +338,7 @@ export default function App() {
           </IconButton>
         </DialogTitle>
         <DialogContent dividers sx={{ borderColor: 'rgba(255,255,255,0.05)', px: { xs: 2, sm: 3 } }}>
-          <WebhookGuide serverStatus={connected} environment={isDemoRoute ? 'demo' : 'main'} backendUrl={apiClient.baseUrl} />
+          <WebhookGuide serverStatus={connected} backendUrl={apiClient.baseUrl} />
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button variant="contained" onClick={() => setGuideOpen(false)} sx={{ px: 3, borderRadius: 1.5 }}>

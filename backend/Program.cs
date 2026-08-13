@@ -4,11 +4,6 @@ using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
-var demoConfiguration = new ConfigurationBuilder()
-    .SetBasePath(builder.Environment.ContentRootPath)
-    .AddJsonFile("appsettings.Demo.json", optional: true, reloadOnChange: true)
-    .AddEnvironmentVariables()
-    .Build();
 
 builder.Services.AddOpenApi();
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -31,60 +26,14 @@ builder.Services.AddCors(options =>
             policy.WithOrigins(allowedCorsOrigins).AllowAnyMethod().AllowAnyHeader();
     });
 });
-builder.Services.AddHttpContextAccessor();
-
 var connStr = builder.Configuration.GetConnectionString("MySql");
 
 if (string.IsNullOrWhiteSpace(connStr))
     throw new InvalidOperationException("ConnectionStrings:MySql is not configured");
 
-var demoWebhookSecretConfig = demoConfiguration.GetValue<string>("DemoWebhookSettings:Secret");
-var demoStorageConfigured = demoConfiguration.GetValue<bool>("DemoSettings:Isolated")
-    && !string.IsNullOrWhiteSpace(demoWebhookSecretConfig);
-
-builder.Services.AddSingleton(sp => new DbRouter(
-    new DbService(connStr),
-    demoStorageConfigured ? new DbService(connStr, "demo_") : null,
-    sp.GetRequiredService<IHttpContextAccessor>()));
+builder.Services.AddSingleton(new DbService(connStr));
 
 var app = builder.Build();
-
-// Demo uses the same process/port. Rewrite its namespaced URLs to the existing
-// handlers while keeping request-scoped storage and MT5 state isolated.
-app.Use(async (context, next) =>
-{
-    PathString remaining;
-    var isDemoRequest = false;
-
-    if (context.Request.Path.StartsWithSegments("/demo/api", out remaining))
-    {
-        isDemoRequest = true;
-        context.Request.Path = new PathString("/api").Add(remaining);
-    }
-    else if (context.Request.Path.Equals("/demo/webhook"))
-    {
-        isDemoRequest = true;
-        context.Request.Path = "/webhook";
-    }
-
-    if (isDemoRequest)
-    {
-        context.Items[DbRouter.InstanceKey] = "demo";
-        if (!demoStorageConfigured)
-        {
-            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-            await context.Response.WriteAsJsonAsync(new
-            {
-                ok = false,
-                instance = "demo",
-                error = "Demo storage is not configured. Create backend/appsettings.Demo.json."
-            });
-            return;
-        }
-    }
-
-    await next();
-});
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -95,7 +44,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 
 // ─── Startup: migrate legacy JSON only (schema is managed by SQL scripts) ───
-var db = app.Services.GetRequiredService<DbRouter>();
+var db = app.Services.GetRequiredService<DbService>();
 
 var legacyDbPath = Path.Combine(app.Environment.ContentRootPath, "signals_db.json");
 if (File.Exists(legacyDbPath))
@@ -131,10 +80,11 @@ static void RequireIndependentSecret(string name, string? value)
 var webhookSecret = app.Configuration.GetValue<string>("WebhookSettings:Secret");
 
 var mainReadSecret = app.Configuration.GetValue<string>("AdminSettings:ReadSecret");
-var demoReadSecret = demoConfiguration.GetValue<string>("DemoAdminSettings:ReadSecret");
 var mainWriteSecret = app.Configuration.GetValue<string>("AdminSettings:WriteSecret");
-var demoWriteSecret = demoConfiguration.GetValue<string>("DemoAdminSettings:WriteSecret");
-var demoWebhookSecret = demoWebhookSecretConfig ?? string.Empty;
+var mt5Login = app.Configuration.GetValue<long>("MT5Settings:Login");
+var mt5Server = app.Configuration.GetValue<string>("MT5Settings:Server") ?? string.Empty;
+var mt5AccountName = app.Configuration.GetValue<string>("MT5Settings:AccountName") ?? "MetaTrader 5 Account";
+var mt5Currency = app.Configuration.GetValue<string>("MT5Settings:Currency") ?? "USD";
 
 RequireIndependentSecret("WebhookSettings:Secret", webhookSecret);
 RequireIndependentSecret("AdminSettings:ReadSecret", mainReadSecret);
@@ -146,26 +96,6 @@ if (new[] { webhookSecret!, mainReadSecret!, mainWriteSecret! }
     throw new InvalidOperationException(
         "Main webhook, dashboard read, and dashboard write secrets must be different.");
 }
-
-if (demoStorageConfigured)
-{
-    RequireIndependentSecret("DemoWebhookSettings:Secret", demoWebhookSecret);
-    RequireIndependentSecret("DemoAdminSettings:ReadSecret", demoReadSecret);
-    RequireIndependentSecret("DemoAdminSettings:WriteSecret", demoWriteSecret);
-    if (new[] { demoWebhookSecret, demoReadSecret!, demoWriteSecret! }
-        .Distinct(StringComparer.Ordinal)
-        .Count() != 3)
-    {
-        throw new InvalidOperationException(
-            "Demo webhook, dashboard read, and dashboard write secrets must be different.");
-    }
-}
-
-var analyticsBreakEvenThreshold = app.Configuration.GetValue<double?>(
-    "TradeAnalyticsSettings:BreakEvenThresholdMoney") ?? 1.0;
-if (!double.IsFinite(analyticsBreakEvenThreshold) || analyticsBreakEvenThreshold is < 0 or > 1_000_000)
-    throw new InvalidOperationException(
-        "TradeAnalyticsSettings:BreakEvenThresholdMoney must be a finite value between 0 and 1000000.");
 
 var rawJsonOptions = new JsonSerializerOptions
 {
@@ -179,22 +109,18 @@ var jsonOpts = new JsonSerializerOptions
     WriteIndented = true
 };
 
-// ─── MT5 in-memory state (isolated per Main/Demo request) ────────────
-var httpContextAccessor = app.Services.GetRequiredService<IHttpContextAccessor>();
-var runtime = new TradingRuntimeRouter(httpContextAccessor);
-string ActiveWebhookSecret() => runtime.IsDemo ? demoWebhookSecret : webhookSecret;
-string? ActiveReadSecret() => runtime.IsDemo ? demoReadSecret : mainReadSecret;
-string? ActiveWriteSecret() => runtime.IsDemo ? demoWriteSecret : mainWriteSecret;
+// ─── MT5 in-memory state ─────────────────────────────────────────────
+var runtime = new TradingRuntimeState();
 bool HasActiveReadAccess(HttpContext context)
 {
     return BackendSecurity.IsRequestAuthorized(
         context.Request,
-        ActiveReadSecret(),
-        ActiveWriteSecret());
+        mainReadSecret,
+        mainWriteSecret);
 }
 bool HasActiveWriteAccess(HttpContext context)
 {
-    return BackendSecurity.IsRequestAuthorized(context.Request, ActiveWriteSecret());
+    return BackendSecurity.IsRequestAuthorized(context.Request, mainWriteSecret);
 }
 
 // Load latest snapshot from MySQL on startup
@@ -222,9 +148,6 @@ catch (Exception ex)
     Console.WriteLine($"[MySQL] Error restoring latest snapshot on startup: {ex.Message}");
 }
 
-double currentPrice = 3980.0;
-var random = new Random();
-
 // ─── Webhook: รับสัญญาณจาก TradingView ──────────────────────────────
 app.MapPost("/webhook", async (HttpContext context) =>
 {
@@ -246,7 +169,7 @@ app.MapPost("/webhook", async (HttpContext context) =>
             return Results.BadRequest(new { ok = false, error = "Invalid JSON payload" });
         }
 
-        if (!BackendSecurity.FixedTimeEquals(payload.Token, ActiveWebhookSecret()))
+        if (!BackendSecurity.FixedTimeEquals(payload.Token, webhookSecret))
         {
             await db.AddLogAsync(payload.Action ?? "?", body, null, "Unauthorized");
             return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
@@ -341,7 +264,7 @@ app.MapGet("/api/signals", async () =>
 // ─── POST /api/signals/pending — Heartbeat from EA ───────────────────
 app.MapPost("/api/signals/pending", async ([FromBody] HeartbeatPayload payload) =>
 {
-    if (!BackendSecurity.FixedTimeEquals(payload.Token, ActiveWebhookSecret()))
+    if (!BackendSecurity.FixedTimeEquals(payload.Token, webhookSecret))
         return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
 
     // Update in-memory MT5 state
@@ -352,7 +275,6 @@ app.MapPost("/api/signals/pending", async ([FromBody] HeartbeatPayload payload) 
     runtime.Bid           = payload.Bid;
     runtime.Ask           = payload.Ask;
     runtime.Positions     = payload.Positions;
-    runtime.Connected     = true;
 
     // Persist snapshot to MySQL (fire-and-forget style to not slow heartbeat)
     var posJson = JsonSerializer.Serialize(payload.Positions);
@@ -364,43 +286,10 @@ app.MapPost("/api/signals/pending", async ([FromBody] HeartbeatPayload payload) 
     return Results.Ok(pending);
 });
 
-// Rich, per-trade analytics are isolated to Demo/Test. Main API cannot write here.
-app.MapPost("/api/trade-analytics", async ([FromBody] DemoTradeAnalyticsPayload payload) =>
-{
-    if (!runtime.IsDemo)
-        return Results.Json(new { ok = false, error = "Trade analytics are demo-only. Use /demo/api/trade-analytics." }, statusCode: 403);
-    if (!BackendSecurity.FixedTimeEquals(payload.Token, ActiveWebhookSecret()))
-        return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
-    var validationError = DemoTradeAnalyticsValidator.ValidateAndNormalize(
-        payload,
-        analyticsBreakEvenThreshold);
-    if (validationError != null)
-        return Results.BadRequest(new { ok = false, error = validationError });
-
-    await db.UpsertDemoTradeAnalyticsAsync(payload);
-    return Results.Ok(new
-    {
-        ok = true,
-        instance = "demo",
-        positionId = payload.PositionId,
-        accountRef = payload.AccountRef
-    });
-});
-
-app.MapGet("/api/trade-analytics", async (HttpContext context, [FromQuery] int limit = 100) =>
-{
-    if (!runtime.IsDemo)
-        return Results.Json(new { ok = false, error = "Trade analytics are demo-only. Use /demo/api/trade-analytics." }, statusCode: 403);
-    if (!HasActiveReadAccess(context))
-        return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
-    context.Response.Headers.CacheControl = "no-store";
-    return Results.Ok(await db.GetDemoTradeAnalyticsAsync(Math.Clamp(limit, 1, 500)));
-});
-
 // ─── POST /api/signals/update — EA reports open/close result ─────────
 app.MapPost("/api/signals/update", async ([FromBody] SignalUpdatePayload payload) =>
 {
-    if (!BackendSecurity.FixedTimeEquals(payload.Token, ActiveWebhookSecret()))
+    if (!BackendSecurity.FixedTimeEquals(payload.Token, webhookSecret))
         return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
 
     var signal = await db.GetSignalByIdAsync(payload.Id);
@@ -423,7 +312,7 @@ app.MapPost("/api/signals/update", async ([FromBody] SignalUpdatePayload payload
 // ─── POST /api/signals/local — EA reports a local open/close trade ────
 app.MapPost("/api/signals/local", async ([FromBody] LocalTradePayload payload) =>
 {
-    if (!BackendSecurity.FixedTimeEquals(payload.Token, ActiveWebhookSecret()))
+    if (!BackendSecurity.FixedTimeEquals(payload.Token, webhookSecret))
         return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
 
     var signal = await db.GetSignalByIdAsync(payload.Id) ?? new Signal();
@@ -487,7 +376,7 @@ app.MapGet("/api/status", async () =>
     return Results.Json(new
     {
         ok               = true,
-        instance         = runtime.Instance,
+        instance         = "production",
         environment      = app.Environment.EnvironmentName,
         mode             = "mql5_ea",
         open_trades      = openCount,
@@ -495,22 +384,6 @@ app.MapGet("/api/status", async () =>
         mt5_connected    = isConnected,
         message          = "ระบบพร้อมเชื่อมต่อกับ MQL5 EA เรียบร้อย"
     }, rawJsonOptions);
-});
-
-// ─── POST /api/connect / disconnect ──────────────────────────────────
-app.MapPost("/api/connect", (HttpContext context) =>
-{
-    if (!HasActiveWriteAccess(context))
-        return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
-    runtime.Connected = true;
-    return Results.Ok(new { ok = true, message = "Connected to MT5" });
-});
-app.MapPost("/api/disconnect", (HttpContext context) =>
-{
-    if (!HasActiveWriteAccess(context))
-        return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
-    runtime.Connected = false;
-    return Results.Ok(new { ok = true, message = "Disconnected from MT5" });
 });
 
 // ─── GET /api/account ────────────────────────────────────────────────
@@ -524,13 +397,13 @@ app.MapGet("/api/account", () =>
     {
         balance     = Math.Round(runtime.Balance, 2),
         equity      = Math.Round(runtime.Equity, 2),
-        margin      = Math.Round(runtime.Equity * 0.8, 2),
+        margin      = Math.Round(Math.Max(0, runtime.Equity - runtime.FreeMargin), 2),
         free_margin = Math.Round(runtime.FreeMargin, 2),
         profit      = Math.Round(runtime.Equity - runtime.Balance, 2),
-        currency    = "USD",
-        login       = 279661518,
-        name        = "Exness Demo Account",
-        server      = "Exness-Demo"
+        currency    = mt5Currency,
+        login       = mt5Login,
+        name        = mt5AccountName,
+        server      = mt5Server
     }, rawJsonOptions);
 });
 
@@ -538,16 +411,11 @@ app.MapGet("/api/account", () =>
 app.MapGet("/api/price", () =>
 {
     var isConnected = (DateTime.UtcNow - runtime.LastHeartbeat).TotalSeconds < 10;
+    if (!isConnected || runtime.Bid <= 0 || runtime.Ask <= 0)
+        return Results.Json(new { ok = false, error = "Live MT5 price is unavailable" }, statusCode: 503);
+
     double bid = runtime.Bid;
     double ask = runtime.Ask;
-
-    if (!isConnected || runtime.Bid == 0)
-    {
-        currentPrice += (random.NextDouble() - 0.5) * 0.2;
-        currentPrice  = Math.Round(currentPrice, 2);
-        bid = currentPrice - 0.05;
-        ask = currentPrice + 0.05;
-    }
 
     double spread = Math.Round((ask - bid) * 100.0, 1);
     return Results.Json(new
@@ -645,7 +513,7 @@ app.MapPost("/api/trade", async (HttpContext context) =>
 {
     if (!HasActiveWriteAccess(context))
         return Results.Json(new { ok = false, error = "Unauthorized" }, statusCode: 401);
-    if (!runtime.Connected)
+    if ((DateTime.UtcNow - runtime.LastHeartbeat).TotalSeconds >= 10)
         return Results.Json(new { ok = false, error = "MT5 Not Connected" }, statusCode: 400);
 
     using var reader = new StreamReader(context.Request.Body);
@@ -735,84 +603,6 @@ app.MapFallbackToFile("index.html");
 
 app.Run();
 
-public sealed class DbRouter
-{
-    public const string InstanceKey = "ATS.Instance";
-
-    private readonly DbService _main;
-    private readonly DbService? _demo;
-    private readonly IHttpContextAccessor _httpContextAccessor;
-
-    public DbRouter(DbService main, DbService? demo, IHttpContextAccessor httpContextAccessor)
-    {
-        _main = main;
-        _demo = demo;
-        _httpContextAccessor = httpContextAccessor;
-    }
-
-    private bool IsDemo => string.Equals(
-        _httpContextAccessor.HttpContext?.Items[InstanceKey] as string,
-        "demo",
-        StringComparison.OrdinalIgnoreCase);
-
-    private DbService Current => IsDemo
-        ? _demo ?? throw new InvalidOperationException("Demo storage is not configured")
-        : _main;
-
-    public Task<List<Signal>> ReadSignalsAsync() => Current.ReadSignalsAsync();
-    public Task<Signal?> GetSignalByIdAsync(string id) => Current.GetSignalByIdAsync(id);
-    public Task UpsertSignalAsync(Signal signal) => Current.UpsertSignalAsync(signal);
-    public Task ClearSignalsAsync() => Current.ClearSignalsAsync();
-    public Task AddLogAsync(string action, string body, string? result, string? error = null) =>
-        Current.AddLogAsync(action, body, result, error);
-    public Task<List<WebhookLogEntry>> GetRecentLogsAsync(int count = 20) =>
-        Current.GetRecentLogsAsync(count);
-    public Task<AccountSnapshotEntity?> GetLatestAccountSnapshotAsync() =>
-        Current.GetLatestAccountSnapshotAsync();
-    public Task AddAccountSnapshotAsync(double balance, double equity, double freeMargin,
-        double bid, double ask, int openPositions, string positionsJson) =>
-        Current.AddAccountSnapshotAsync(balance, equity, freeMargin, bid, ask, openPositions, positionsJson);
-    public Task InsertTradeAnalyticsAsync(LocalTradePayload payload) =>
-        Current.InsertTradeAnalyticsAsync(payload);
-    public Task UpsertDemoTradeAnalyticsAsync(DemoTradeAnalyticsPayload payload)
-    {
-        if (!IsDemo) throw new InvalidOperationException("Demo analytics cannot use main storage");
-        return Current.UpsertDemoTradeAnalyticsAsync(payload);
-    }
-    public Task<List<DemoTradeAnalyticsRecord>> GetDemoTradeAnalyticsAsync(int limit)
-    {
-        if (!IsDemo) throw new InvalidOperationException("Demo analytics cannot use main storage");
-        return Current.GetDemoTradeAnalyticsAsync(limit);
-    }
-}
-
-public sealed class TradingRuntimeRouter
-{
-    private readonly IHttpContextAccessor _httpContextAccessor;
-    private readonly TradingRuntimeState _main = new();
-    private readonly TradingRuntimeState _demo = new();
-
-    public TradingRuntimeRouter(IHttpContextAccessor httpContextAccessor) =>
-        _httpContextAccessor = httpContextAccessor;
-
-    public bool IsDemo => string.Equals(
-        _httpContextAccessor.HttpContext?.Items[DbRouter.InstanceKey] as string,
-        "demo",
-        StringComparison.OrdinalIgnoreCase);
-
-    private TradingRuntimeState Current => IsDemo ? _demo : _main;
-
-    public string Instance => IsDemo ? "demo" : "main";
-    public DateTime LastHeartbeat { get => Current.LastHeartbeat; set => Current.LastHeartbeat = value; }
-    public double Balance { get => Current.Balance; set => Current.Balance = value; }
-    public double Equity { get => Current.Equity; set => Current.Equity = value; }
-    public double FreeMargin { get => Current.FreeMargin; set => Current.FreeMargin = value; }
-    public double Bid { get => Current.Bid; set => Current.Bid = value; }
-    public double Ask { get => Current.Ask; set => Current.Ask = value; }
-    public List<HeartbeatPosition> Positions { get => Current.Positions; set => Current.Positions = value; }
-    public bool Connected { get => Current.Connected; set => Current.Connected = value; }
-}
-
 public sealed class TradingRuntimeState
 {
     public DateTime LastHeartbeat { get; set; } = DateTime.MinValue;
@@ -822,7 +612,6 @@ public sealed class TradingRuntimeState
     public double Bid { get; set; }
     public double Ask { get; set; }
     public List<HeartbeatPosition> Positions { get; set; } = new();
-    public bool Connected { get; set; }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -835,15 +624,12 @@ public class DbService
     private readonly string _webhookLogsTable;
     private readonly string _accountSnapshotsTable;
 
-    public DbService(string connStr, string tablePrefix = "")
+    public DbService(string connStr)
     {
-        if (tablePrefix is not ("" or "demo_"))
-            throw new ArgumentException("Unsupported database table prefix", nameof(tablePrefix));
-
         _connStr = connStr;
-        _signalsTable = $"{tablePrefix}signals";
-        _webhookLogsTable = $"{tablePrefix}webhook_logs";
-        _accountSnapshotsTable = $"{tablePrefix}account_snapshots";
+        _signalsTable = "signals";
+        _webhookLogsTable = "webhook_logs";
+        _accountSnapshotsTable = "account_snapshots";
     }
 
     private MySqlConnection Open() => new MySqlConnection(_connStr);
@@ -932,11 +718,10 @@ ON DUPLICATE KEY UPDATE
     // ── Insert Trade Analytics (Phase 1 ML) ───────────────────────────
     public async Task InsertTradeAnalyticsAsync(LocalTradePayload p)
     {
-        string table = _signalsTable.StartsWith("demo_") ? "demo_trade_analytics" : "trade_analytics";
         await using var conn = Open();
         await conn.OpenAsync();
-        var sql = $@"
-INSERT INTO `{table}` 
+        const string sql = @"
+INSERT INTO `trade_analytics`
 (ticket, symbol, action, entry_price, exit_price, profit, mfe, mae, adx, chop, atr_ratio, is_low_vol, entry_condition)
 VALUES (@ticket, @symbol, @action, @entry_price, @exit_price, @profit, @mfe, @mae, @adx, @chop, @atr_ratio, @is_low_vol, @entry_condition)
 ON DUPLICATE KEY UPDATE 
@@ -1120,148 +905,6 @@ VALUES (@ts, @balance, @equity, @free_margin, @bid, @ask, @open_positions, @posi
     }
 
     // ── Map DataReader → Signal ───────────────────────────────────────
-    public async Task UpsertDemoTradeAnalyticsAsync(DemoTradeAnalyticsPayload p)
-    {
-        if (!_signalsTable.StartsWith("demo_", StringComparison.Ordinal))
-            throw new InvalidOperationException("Demo analytics cannot use main storage");
-
-        await using var conn = Open();
-        await conn.OpenAsync();
-        const string sql = @"
-INSERT INTO `demo_trade_analytics`
-    (ticket, account_ref, symbol, action, signal_type, timeframe, entry_time, exit_time,
-     duration_seconds, entry_price, exit_price, volume, initial_sl, initial_tp,
-     profit, commission, swap, net_profit, mfe, mae, spread_points, atr,
-     market_regime, session_name, entry_hour, loss_streak_before, exit_reason,
-     ea_version, settings_hash, level_price, pivot_time, result,
-     broker_utc_offset_seconds, time_basis, data_quality)
-VALUES
-    (@ticket, @account_ref, @symbol, @action, @signal_type, @timeframe, @entry_time, @exit_time,
-     @duration_seconds, @entry_price, @exit_price, @volume, @initial_sl, @initial_tp,
-     @profit, @commission, @swap, @net_profit, @mfe, @mae, @spread_points, @atr,
-     @market_regime, @session_name, @entry_hour, @loss_streak_before, @exit_reason,
-     @ea_version, @settings_hash, @level_price, @pivot_time, @result,
-     @broker_utc_offset_seconds, @time_basis, @data_quality)
-ON DUPLICATE KEY UPDATE
-    symbol=VALUES(symbol), action=VALUES(action), signal_type=VALUES(signal_type),
-    timeframe=VALUES(timeframe), entry_time=VALUES(entry_time), exit_time=VALUES(exit_time),
-    duration_seconds=VALUES(duration_seconds), entry_price=VALUES(entry_price),
-    exit_price=VALUES(exit_price), volume=VALUES(volume), initial_sl=VALUES(initial_sl),
-    initial_tp=VALUES(initial_tp), profit=VALUES(profit), commission=VALUES(commission),
-    swap=VALUES(swap), net_profit=VALUES(net_profit), mfe=VALUES(mfe), mae=VALUES(mae),
-    spread_points=VALUES(spread_points), atr=VALUES(atr), market_regime=VALUES(market_regime),
-    session_name=VALUES(session_name), entry_hour=VALUES(entry_hour),
-    loss_streak_before=VALUES(loss_streak_before), exit_reason=VALUES(exit_reason),
-    ea_version=VALUES(ea_version), settings_hash=VALUES(settings_hash),
-    level_price=VALUES(level_price), pivot_time=VALUES(pivot_time), result=VALUES(result),
-    broker_utc_offset_seconds=VALUES(broker_utc_offset_seconds),
-    time_basis=VALUES(time_basis), data_quality=VALUES(data_quality),
-    updated_at=CURRENT_TIMESTAMP;";
-        await using var cmd = new MySqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("@ticket", p.PositionId);
-        cmd.Parameters.AddWithValue("@account_ref", p.AccountRef);
-        cmd.Parameters.AddWithValue("@symbol", p.Symbol);
-        cmd.Parameters.AddWithValue("@action", p.Action);
-        cmd.Parameters.AddWithValue("@signal_type", p.SignalType);
-        cmd.Parameters.AddWithValue("@timeframe", p.Timeframe);
-        cmd.Parameters.AddWithValue("@entry_time", DateTimeOffset.FromUnixTimeSeconds(p.EntryTime).UtcDateTime);
-        cmd.Parameters.AddWithValue("@exit_time", DateTimeOffset.FromUnixTimeSeconds(p.ExitTime).UtcDateTime);
-        cmd.Parameters.AddWithValue("@duration_seconds", p.DurationSeconds);
-        cmd.Parameters.AddWithValue("@entry_price", p.EntryPrice);
-        cmd.Parameters.AddWithValue("@exit_price", p.ExitPrice);
-        cmd.Parameters.AddWithValue("@volume", p.Volume);
-        cmd.Parameters.AddWithValue("@initial_sl", p.InitialSl);
-        cmd.Parameters.AddWithValue("@initial_tp", p.InitialTp);
-        cmd.Parameters.AddWithValue("@profit", p.Profit);
-        cmd.Parameters.AddWithValue("@commission", p.Commission);
-        cmd.Parameters.AddWithValue("@swap", p.Swap);
-        cmd.Parameters.AddWithValue("@net_profit", p.NetProfit);
-        cmd.Parameters.AddWithValue("@mfe", p.Mfe);
-        cmd.Parameters.AddWithValue("@mae", p.Mae);
-        cmd.Parameters.AddWithValue("@spread_points", p.SpreadPoints);
-        cmd.Parameters.AddWithValue("@atr", p.Atr);
-        cmd.Parameters.AddWithValue("@market_regime", p.MarketRegime);
-        cmd.Parameters.AddWithValue("@session_name", p.SessionName);
-        cmd.Parameters.AddWithValue("@entry_hour", p.EntryHour);
-        cmd.Parameters.AddWithValue("@loss_streak_before", p.LossStreakBefore);
-        cmd.Parameters.AddWithValue("@exit_reason", p.ExitReason);
-        cmd.Parameters.AddWithValue("@ea_version", p.EaVersion);
-        cmd.Parameters.AddWithValue("@settings_hash", p.SettingsHash);
-        cmd.Parameters.AddWithValue("@level_price", p.LevelPrice);
-        cmd.Parameters.AddWithValue("@pivot_time", DateTimeOffset.FromUnixTimeSeconds(p.PivotTime).UtcDateTime);
-        cmd.Parameters.AddWithValue("@result", p.Result);
-        cmd.Parameters.AddWithValue("@broker_utc_offset_seconds", p.BrokerUtcOffsetSeconds);
-        cmd.Parameters.AddWithValue("@time_basis", p.TimeBasis);
-        cmd.Parameters.AddWithValue("@data_quality", p.DataQuality);
-        await cmd.ExecuteNonQueryAsync();
-    }
-
-    public async Task<List<DemoTradeAnalyticsRecord>> GetDemoTradeAnalyticsAsync(int limit)
-    {
-        if (!_signalsTable.StartsWith("demo_", StringComparison.Ordinal))
-            throw new InvalidOperationException("Demo analytics cannot use main storage");
-
-        await using var conn = Open();
-        await conn.OpenAsync();
-        const string sql = @"SELECT * FROM `demo_trade_analytics`
-ORDER BY exit_time IS NULL, exit_time DESC, created_at DESC
-LIMIT @limit";
-        await using var cmd = new MySqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("@limit", limit);
-        await using var rdr = await cmd.ExecuteReaderAsync();
-        var list = new List<DemoTradeAnalyticsRecord>();
-        while (await rdr.ReadAsync())
-        {
-            list.Add(new DemoTradeAnalyticsRecord
-            {
-                PositionId = rdr.GetString("ticket"),
-                AccountRef = rdr.GetString("account_ref"),
-                Symbol = rdr.GetString("symbol"),
-                Action = rdr.GetString("action"),
-                SignalType = rdr.GetString("signal_type"),
-                Timeframe = rdr.GetString("timeframe"),
-                EntryTime = ReadNullableUtcDateTime(rdr, "entry_time"),
-                ExitTime = ReadNullableUtcDateTime(rdr, "exit_time"),
-                DurationSeconds = rdr.GetInt32("duration_seconds"),
-                EntryPrice = rdr.GetDouble("entry_price"),
-                ExitPrice = rdr.GetDouble("exit_price"),
-                Volume = rdr.GetDouble("volume"),
-                InitialSl = rdr.GetDouble("initial_sl"),
-                InitialTp = rdr.GetDouble("initial_tp"),
-                Profit = rdr.GetDouble("profit"),
-                Commission = rdr.GetDouble("commission"),
-                Swap = rdr.GetDouble("swap"),
-                NetProfit = rdr.GetDouble("net_profit"),
-                Mfe = rdr.GetDouble("mfe"),
-                Mae = rdr.GetDouble("mae"),
-                SpreadPoints = rdr.GetDouble("spread_points"),
-                Atr = rdr.GetDouble("atr"),
-                MarketRegime = rdr.GetString("market_regime"),
-                SessionName = rdr.GetString("session_name"),
-                EntryHour = rdr.GetInt32("entry_hour"),
-                LossStreakBefore = rdr.GetInt32("loss_streak_before"),
-                ExitReason = rdr.GetString("exit_reason"),
-                EaVersion = rdr.GetString("ea_version"),
-                SettingsHash = rdr.GetString("settings_hash"),
-                LevelPrice = rdr.GetDouble("level_price"),
-                PivotTime = ReadNullableUtcDateTime(rdr, "pivot_time"),
-                Result = rdr.GetString("result"),
-                BrokerUtcOffsetSeconds = rdr.GetInt32("broker_utc_offset_seconds"),
-                TimeBasis = rdr.GetString("time_basis"),
-                DataQuality = rdr.GetString("data_quality")
-            });
-        }
-        return list;
-    }
-
-    private static DateTime? ReadNullableUtcDateTime(MySqlDataReader reader, string column)
-    {
-        var ordinal = reader.GetOrdinal(column);
-        return reader.IsDBNull(ordinal)
-            ? null
-            : DateTime.SpecifyKind(reader.GetDateTime(ordinal), DateTimeKind.Utc);
-    }
-
     private static Signal MapSignal(MySqlDataReader r) => new Signal
     {
         Id         = r.GetString("id"),
@@ -1378,85 +1021,6 @@ public class SignalUpdatePayload
     [JsonPropertyName("entry_price")] public double EntryPrice { get; set; }
     [JsonPropertyName("exit_price")]  public double ExitPrice  { get; set; }
     [JsonPropertyName("profit")]      public double Profit     { get; set; }
-}
-
-public class DemoTradeAnalyticsPayload
-{
-    [JsonPropertyName("token")] public string Token { get; set; } = string.Empty;
-    [JsonPropertyName("position_id")] public string PositionId { get; set; } = string.Empty;
-    [JsonPropertyName("account_ref")] public string AccountRef { get; set; } = string.Empty;
-    [JsonPropertyName("symbol")] public string Symbol { get; set; } = string.Empty;
-    [JsonPropertyName("action")] public string Action { get; set; } = string.Empty;
-    [JsonPropertyName("signal_type")] public string SignalType { get; set; } = string.Empty;
-    [JsonPropertyName("timeframe")] public string Timeframe { get; set; } = string.Empty;
-    [JsonPropertyName("entry_time")] public long EntryTime { get; set; }
-    [JsonPropertyName("exit_time")] public long ExitTime { get; set; }
-    [JsonPropertyName("duration_seconds")] public int DurationSeconds { get; set; }
-    [JsonPropertyName("entry_price")] public double EntryPrice { get; set; }
-    [JsonPropertyName("exit_price")] public double ExitPrice { get; set; }
-    [JsonPropertyName("volume")] public double Volume { get; set; }
-    [JsonPropertyName("initial_sl")] public double InitialSl { get; set; }
-    [JsonPropertyName("initial_tp")] public double InitialTp { get; set; }
-    [JsonPropertyName("profit")] public double Profit { get; set; }
-    [JsonPropertyName("commission")] public double Commission { get; set; }
-    [JsonPropertyName("swap")] public double Swap { get; set; }
-    [JsonPropertyName("net_profit")] public double NetProfit { get; set; }
-    [JsonPropertyName("mfe")] public double Mfe { get; set; }
-    [JsonPropertyName("mae")] public double Mae { get; set; }
-    [JsonPropertyName("spread_points")] public double SpreadPoints { get; set; }
-    [JsonPropertyName("atr")] public double Atr { get; set; }
-    [JsonPropertyName("market_regime")] public string MarketRegime { get; set; } = string.Empty;
-    [JsonPropertyName("session_name")] public string SessionName { get; set; } = string.Empty;
-    [JsonPropertyName("entry_hour")] public int EntryHour { get; set; }
-    [JsonPropertyName("loss_streak_before")] public int LossStreakBefore { get; set; }
-    [JsonPropertyName("exit_reason")] public string ExitReason { get; set; } = string.Empty;
-    [JsonPropertyName("ea_version")] public string EaVersion { get; set; } = string.Empty;
-    [JsonPropertyName("settings_hash")] public string SettingsHash { get; set; } = string.Empty;
-    [JsonPropertyName("level_price")] public double LevelPrice { get; set; }
-    [JsonPropertyName("pivot_time")] public long PivotTime { get; set; }
-    [JsonPropertyName("result")] public string Result { get; set; } = string.Empty;
-    [JsonPropertyName("broker_utc_offset_seconds")] public int BrokerUtcOffsetSeconds { get; set; }
-    [JsonPropertyName("time_basis")] public string TimeBasis { get; set; } = "BROKER_SERVER";
-    [JsonPropertyName("data_quality")] public string DataQuality { get; set; } = string.Empty;
-}
-
-public class DemoTradeAnalyticsRecord
-{
-    public string PositionId { get; set; } = string.Empty;
-    public string AccountRef { get; set; } = string.Empty;
-    public string Symbol { get; set; } = string.Empty;
-    public string Action { get; set; } = string.Empty;
-    public string SignalType { get; set; } = string.Empty;
-    public string Timeframe { get; set; } = string.Empty;
-    public DateTime? EntryTime { get; set; }
-    public DateTime? ExitTime { get; set; }
-    public int DurationSeconds { get; set; }
-    public double EntryPrice { get; set; }
-    public double ExitPrice { get; set; }
-    public double Volume { get; set; }
-    public double InitialSl { get; set; }
-    public double InitialTp { get; set; }
-    public double Profit { get; set; }
-    public double Commission { get; set; }
-    public double Swap { get; set; }
-    public double NetProfit { get; set; }
-    public double Mfe { get; set; }
-    public double Mae { get; set; }
-    public double SpreadPoints { get; set; }
-    public double Atr { get; set; }
-    public string MarketRegime { get; set; } = string.Empty;
-    public string SessionName { get; set; } = string.Empty;
-    public int EntryHour { get; set; }
-    public int LossStreakBefore { get; set; }
-    public string ExitReason { get; set; } = string.Empty;
-    public string EaVersion { get; set; } = string.Empty;
-    public string SettingsHash { get; set; } = string.Empty;
-    public double LevelPrice { get; set; }
-    public DateTime? PivotTime { get; set; }
-    public string Result { get; set; } = string.Empty;
-    public int BrokerUtcOffsetSeconds { get; set; }
-    public string TimeBasis { get; set; } = string.Empty;
-    public string DataQuality { get; set; } = string.Empty;
 }
 
 public class HeartbeatPayload

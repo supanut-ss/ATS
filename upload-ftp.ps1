@@ -1,259 +1,239 @@
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$Server,
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    FTP utility library. Dot-source this file to load functions.
+    (ไลบรารีสำหรับจัดการ FTP/FTPS - ใช้สำหรับ include เข้าไปในสคริปต์อื่น)
+    Usage: . "$PSScriptRoot\upload-ftp.ps1"
 
-    [Parameter(Mandatory = $true)]
-    [string]$Username,
+.NOTES
+    รองรับการเชื่อมต่อแบบ FTP ปกติ และ FTPS (Explicit TLS)
+    * ไม่รองรับ SFTP (หากต้องการใช้ SFTP ต้องพึ่งพาเครื่องมืออื่นเช่น WinSCP หรือ Posh-SSH)
 
-    [Parameter(Mandatory = $true)]
-    [string]$Password,
+    ข้อจำกัดของการใช้ FTP บน Shared Hosting ทั่วไป:
+      - ไม่สามารถเขียนทับไฟล์แบบ Atomic ได้ 100% จึงต้องใช้วิธีเปลี่ยนชื่อ (Rename)
+      - ฟังก์ชันการเช็ค Lock อาจมี Race condition เล็กน้อยเนื่องจากข้อจำกัดของ Protocol
+#>
 
-    [Parameter(Mandatory = $true)]
-    [string]$LocalPath,
+# -- Connection state (module-level) ------------------------------------------
+$script:FtpConn = @{
+    Server   = [string]""
+    User     = [string]""
+    Password = [string]""
+    UseTls   = $false
+}
 
-    [Parameter(Mandatory = $false)]
-    [string]$RemotePath = "",
+# -----------------------------------------------------------------------------
+# Public: Initialize-FtpConnection
+# -----------------------------------------------------------------------------
+function Initialize-FtpConnection {
+    param(
+        [Parameter(Mandatory)][string]$Server,
+        [Parameter(Mandatory)][string]$Username,
+        [Parameter(Mandatory)][string]$Password,
+        [switch]$UseTls
+    )
+    $script:FtpConn.Server   = $Server.Trim()
+    $script:FtpConn.User     = $Username
+    $script:FtpConn.Password = $Password
+    $script:FtpConn.UseTls   = $UseTls.IsPresent
+}
 
-    [string[]]$ExcludePaths = @(),
-
-    [switch]$DryRun
-)
-
-$ErrorActionPreference = "Stop"
+# -----------------------------------------------------------------------------
+# Internal helpers
+# -----------------------------------------------------------------------------
+function ConvertTo-FtpUri ([string]$RemotePath) {
+    $p = $RemotePath.Replace('\', '/').TrimStart('/')
+    while ($p.Contains('//')) { $p = $p.Replace('//', '/') }
+    return "ftp://$($script:FtpConn.Server)/$p"
+}
 
 function New-FtpRequest {
     param(
         [string]$Uri,
-        [string]$Method
+        [string]$Method,
+        [int]$TimeoutMs      = 60000,
+        [int]$ReadWriteMs    = 180000
     )
-
-    $request = [System.Net.FtpWebRequest]::Create($Uri)
-    $request.Method = $Method
-    $request.Credentials = New-Object System.Net.NetworkCredential($Username, $Password)
-    $request.UsePassive = $true
-    $request.UseBinary = $true
-    $request.KeepAlive = $false
-    $request.Timeout = 30000
-    $request.ReadWriteTimeout = 120000
-    return $request
+    $req = [System.Net.FtpWebRequest]::Create($Uri)
+    $req.Method           = $Method
+    $req.Credentials      = [System.Net.NetworkCredential]::new($script:FtpConn.User, $script:FtpConn.Password)
+    $req.UsePassive       = $true
+    $req.UseBinary        = $true
+    $req.KeepAlive        = $false
+    $req.Timeout          = $TimeoutMs
+    $req.ReadWriteTimeout = $ReadWriteMs
+    if ($script:FtpConn.UseTls) { $req.EnableSsl = $true }
+    return $req
 }
 
-function Test-RemoteDirectoryExists {
-    param([string]$DirectoryPath)
-
-    if ([string]::IsNullOrWhiteSpace($DirectoryPath)) {
-        return $true
+function Get-FtpStatusCode ([System.Net.WebException]$ex) {
+    if ($ex.Response) {
+        $sc = [int]$ex.Response.StatusCode
+        $ex.Response.Close()
+        return $sc
     }
+    return -1
+}
 
-    $uri = "ftp://$Server/$($DirectoryPath.Trim('/'))/"
-
+# -----------------------------------------------------------------------------
+# Public: Existence checks
+# -----------------------------------------------------------------------------
+function Test-FtpFileExists ([string]$RemotePath) {
     try {
-        $request = New-FtpRequest -Uri $uri -Method ([System.Net.WebRequestMethods+Ftp]::ListDirectory)
-        $response = $request.GetResponse()
-        $response.Close()
+        $req  = New-FtpRequest (ConvertTo-FtpUri $RemotePath) ([System.Net.WebRequestMethods+Ftp]::GetFileSize)
+        $resp = $req.GetResponse(); $resp.Close()
         return $true
-    }
-    catch {
-        return $false
+    } catch { return $false }
+}
+
+function Test-FtpDirectoryExists ([string]$RemotePath) {
+    try {
+        $uri  = ConvertTo-FtpUri ($RemotePath.TrimEnd('/') + '/')
+        $req  = New-FtpRequest $uri ([System.Net.WebRequestMethods+Ftp]::ListDirectory)
+        $resp = $req.GetResponse(); $resp.Close()
+        return $true
+    } catch { return $false }
+}
+
+# -----------------------------------------------------------------------------
+# Public: Directory creation (creates each segment, ignores 550 = already exists)
+# -----------------------------------------------------------------------------
+function Ensure-FtpDirectory ([string]$RemotePath) {
+    if ([string]::IsNullOrWhiteSpace($RemotePath)) { return }
+    $parts = $RemotePath.Trim('/').Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
+    $cur   = ""
+    foreach ($part in $parts) {
+        $cur = if ($cur) { "$cur/$part" } else { $part }
+        try {
+            $req  = New-FtpRequest (ConvertTo-FtpUri $cur) ([System.Net.WebRequestMethods+Ftp]::MakeDirectory)
+            $resp = $req.GetResponse(); $resp.Close()
+        } catch [System.Net.WebException] {
+            $sc = Get-FtpStatusCode $_
+            if ($sc -eq 550) { continue }    # already exists -- ok
+            if (Test-FtpDirectoryExists $cur) { continue }
+            throw
+        }
     }
 }
 
-function Ensure-RemoteDirectory {
-    param([string]$DirectoryPath)
-
-    if ([string]::IsNullOrWhiteSpace($DirectoryPath)) {
-        return
+# -----------------------------------------------------------------------------
+# Public: Download file as UTF-8 string  (returns null when 550 Not Found)
+# -----------------------------------------------------------------------------
+function Get-FtpFileContent ([string]$RemotePath) {
+    try {
+        $req    = New-FtpRequest (ConvertTo-FtpUri $RemotePath) ([System.Net.WebRequestMethods+Ftp]::DownloadFile)
+        $resp   = $req.GetResponse()
+        $reader = [System.IO.StreamReader]::new($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
+        $text   = $reader.ReadToEnd()
+        $reader.Close(); $resp.Close()
+        return $text
+    } catch [System.Net.WebException] {
+        $sc = Get-FtpStatusCode $_
+        if ($sc -eq 550) { return $null }    # file not found
+        throw
     }
+}
 
-    $parts = $DirectoryPath.Trim('/').Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
-    $current = ""
+# -----------------------------------------------------------------------------
+# Public: Upload raw bytes (with retry + backoff)
+# -----------------------------------------------------------------------------
+function Invoke-FtpUploadBytes {
+    param(
+        [Parameter(Mandatory)][string]$RemotePath,
+        [Parameter(Mandatory)][byte[]]$Bytes,
+        [int]$MaxAttempts = 3
+    )
+    $uri = ConvertTo-FtpUri $RemotePath
+    $dir = ($RemotePath -replace '/[^/]+$', '').TrimEnd('/')
+    if ($dir -and ($dir -ne $RemotePath)) { Ensure-FtpDirectory $dir }
 
-    foreach ($part in $parts) {
-        if ($current) {
-            $current = "$current/$part"
-        }
-        else {
-            $current = $part
-        }
-
-        $uri = "ftp://$Server/$current"
-        if ($DryRun) {
-            continue
-        }
-
+    for ($i = 1; $i -le $MaxAttempts; $i++) {
         try {
-            $request = New-FtpRequest -Uri $uri -Method ([System.Net.WebRequestMethods+Ftp]::MakeDirectory)
-            $response = $request.GetResponse()
-            $response.Close()
-            Write-Host "Created Directory: $current" -ForegroundColor Gray
-        }
-        catch [System.Net.WebException] {
-            $ftpResponse = $_.Exception.Response
-            if ($ftpResponse) {
-                $statusCode = [int]$ftpResponse.StatusCode
-                $ftpResponse.Close()
-
-                if ($statusCode -eq [int][System.Net.FtpStatusCode]::ActionNotTakenFileUnavailable) {
-                    continue
-                }
-            }
-            if (Test-RemoteDirectoryExists -DirectoryPath $current) {
+            $req = New-FtpRequest $uri ([System.Net.WebRequestMethods+Ftp]::UploadFile)
+            $req.ContentLength = $Bytes.Length
+            $s = $req.GetRequestStream()
+            $s.Write($Bytes, 0, $Bytes.Length)
+            $s.Close()
+            $resp = $req.GetResponse(); $resp.Close()
+            return
+        } catch [System.Net.WebException] {
+            $sc = Get-FtpStatusCode $_
+            if ($sc -eq 550 -and $i -eq 1) {
+                # File may be locked -- try delete then retry
+                try { Invoke-FtpDelete $RemotePath } catch { }
                 continue
             }
-            throw "Failed to create remote directory '$current': $($_.Exception.Message)"
+            if ($i -lt $MaxAttempts) {
+                $delay = $i * 3
+                Write-Warning "FTP upload attempt $i/$MaxAttempts failed: $($_.Exception.Message) -- retry in ${delay}s"
+                Start-Sleep $delay
+                continue
+            }
+            throw
+        } catch {
+            if ($i -lt $MaxAttempts) { Start-Sleep ($i * 3); continue }
+            throw
         }
     }
 }
 
-function Upload-File {
-    param(
-        [string]$SourceFile,
-        [string]$RelativePath
-    )
+# -----------------------------------------------------------------------------
+# Public: Upload local file
+# -----------------------------------------------------------------------------
+function Invoke-FtpUploadFile ([string]$LocalPath, [string]$RemotePath, [int]$MaxAttempts = 3) {
+    Invoke-FtpUploadBytes -RemotePath $RemotePath -Bytes ([System.IO.File]::ReadAllBytes($LocalPath)) -MaxAttempts $MaxAttempts
+}
 
-    $remoteFilePath = "$RemotePath/$RelativePath".Replace('\', '/')
-    while ($remoteFilePath.Contains("//")) { $remoteFilePath = $remoteFilePath.Replace("//", "/") }
-    $remoteFilePath = $remoteFilePath.TrimStart('/')
-    
-    $remoteDirectory = (Split-Path $remoteFilePath -Parent).Replace('\', '/')
-    $remoteUri = "ftp://$Server/$remoteFilePath"
-    
+# -----------------------------------------------------------------------------
+# Public: Upload UTF-8 string as a file
+# -----------------------------------------------------------------------------
+function Invoke-FtpUploadText ([string]$RemotePath, [string]$Content) {
+    Invoke-FtpUploadBytes -RemotePath $RemotePath -Bytes ([System.Text.Encoding]::UTF8.GetBytes($Content))
+}
+
+# -----------------------------------------------------------------------------
+# Public: Rename (RNFR/RNTO) -- NewName is just the filename (same directory)
+# -----------------------------------------------------------------------------
+function Invoke-FtpRename ([string]$OldPath, [string]$NewName) {
+    $req = New-FtpRequest (ConvertTo-FtpUri $OldPath) ([System.Net.WebRequestMethods+Ftp]::Rename)
+    $req.RenameTo = $NewName
+    $resp = $req.GetResponse(); $resp.Close()
+}
+
+# -----------------------------------------------------------------------------
+# Public: Delete file (silently ignores 550 = already gone)
+# -----------------------------------------------------------------------------
+function Invoke-FtpDelete ([string]$RemotePath) {
     try {
-        # Check size of remote file to skip if unchanged
-        $request = New-FtpRequest -Uri $remoteUri -Method ([System.Net.WebRequestMethods+Ftp]::GetFileSize)
-        $response = $request.GetResponse()
-        $remoteSize = $response.ContentLength
-        $response.Close()
-
-        $localSize = (Get-Item $SourceFile).Length
-        $shouldAlwaysUpload = $RelativePath.EndsWith(".html", [System.StringComparison]::OrdinalIgnoreCase) -or 
-                              $RelativePath.EndsWith(".htm", [System.StringComparison]::OrdinalIgnoreCase) -or
-                              $RelativePath.EndsWith(".dll", [System.StringComparison]::OrdinalIgnoreCase) -or
-                              $RelativePath.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase) -or
-                              $RelativePath.EndsWith(".json", [System.StringComparison]::OrdinalIgnoreCase)
-
-        if (-not $shouldAlwaysUpload -and $remoteSize -eq $localSize) {
-            Write-Host "Skipped (Size Match): $RelativePath" -ForegroundColor Gray
-            return
-        }
-    }
-    catch {
-        # File doesn't exist, proceed with upload
-    }
-
-    Ensure-RemoteDirectory -DirectoryPath $remoteDirectory
-
-    if ($DryRun) {
-        Write-Host "[DryRun] Upload: $RelativePath"
-        return
-    }
-
-    if (-not (Test-Path $SourceFile)) {
-        return
-    }
-
-    $fileBytes = [System.IO.File]::ReadAllBytes($SourceFile)
-
-    for ($attempt = 1; $attempt -le 2; $attempt++) {
-        try {
-            $request = New-FtpRequest -Uri $remoteUri -Method ([System.Net.WebRequestMethods+Ftp]::UploadFile)
-            $request.ContentLength = $fileBytes.Length
-
-            $stream = $request.GetRequestStream()
-            $stream.Write($fileBytes, 0, $fileBytes.Length)
-            $stream.Close()
-
-            $response = $request.GetResponse()
-            $response.Close()
-
-            Write-Host "Uploaded: $RelativePath"
-            return
-        }
-        catch [System.Net.WebException] {
-            $statusCode = $null
-            $ftpResponse = $_.Exception.Response
-            if ($ftpResponse) {
-                $statusCode = [int]$ftpResponse.StatusCode
-                $ftpResponse.Close()
-            }
-
-            if ($attempt -eq 1 -and $statusCode -eq [int][System.Net.FtpStatusCode]::ActionNotTakenFileUnavailable) {
-                try {
-                    $deleteRequest = New-FtpRequest -Uri $remoteUri -Method ([System.Net.WebRequestMethods+Ftp]::DeleteFile)
-                    $deleteResponse = $deleteRequest.GetResponse()
-                    $deleteResponse.Close()
-                    Write-Host "Retrying after delete: $RelativePath"
-                    continue
-                }
-                catch {
-                }
-            }
-
-            if ($statusCode -eq [int][System.Net.FtpStatusCode]::ActionNotTakenFileUnavailable) {
-                Write-Warning "SKIPPED: Upload failed (550 File Unavailable). The file might be in use or protected: $RelativePath"
-                return
-            }
-
-            throw "Upload failed for '$RelativePath' -> '$remoteUri': $($_.Exception.Message)"
-        }
-        catch {
-            throw "Upload failed for '$RelativePath' -> '$remoteUri': $($_.Exception.Message)"
-        }
+        $req  = New-FtpRequest (ConvertTo-FtpUri $RemotePath) ([System.Net.WebRequestMethods+Ftp]::DeleteFile)
+        $resp = $req.GetResponse(); $resp.Close()
+    } catch [System.Net.WebException] {
+        $sc = Get-FtpStatusCode $_
+        if ($sc -eq 550) { return }    # already gone -- that's fine
+        throw
     }
 }
 
-$resolvedLocal = (Resolve-Path $LocalPath).Path
-if (-not (Test-Path $resolvedLocal)) {
-    throw "LocalPath not found: $LocalPath"
-}
+# -----------------------------------------------------------------------------
+# Public: Atomic-ish upload  (upload as .uploading -> delete old -> rename)
+#   If rename fails: fall back to direct overwrite (logs a warning).
+# -----------------------------------------------------------------------------
+function Invoke-FtpUploadFileAtomic {
+    param(
+        [Parameter(Mandatory)][string]$LocalPath,
+        [Parameter(Mandatory)][string]$RemotePath,
+        [int]$MaxAttempts = 3
+    )
+    $tempPath  = "$RemotePath.uploading"
+    $finalName = [System.IO.Path]::GetFileName($RemotePath)
 
-$files = Get-ChildItem -Path $resolvedLocal -Recurse -File | Sort-Object FullName
-
-if (-not $files) {
-    throw "No files found in LocalPath: $resolvedLocal"
-}
-
-$excluded = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
-foreach ($entry in $ExcludePaths) {
-    if (-not [string]::IsNullOrWhiteSpace($entry)) {
-        $normalized = $entry.Trim().TrimStart('.') -replace '^[\\/]+', ''
-        [void]$excluded.Add($normalized.Replace('\', '/'))
+    Invoke-FtpUploadFile -LocalPath $LocalPath -RemotePath $tempPath -MaxAttempts $MaxAttempts
+    Invoke-FtpDelete $RemotePath
+    try {
+        Invoke-FtpRename -OldPath $tempPath -NewName $finalName
+    } catch {
+        Write-Warning "RNTO rename failed for '$RemotePath' ($($_.Exception.Message)) -- falling back to direct upload."
+        try { Invoke-FtpDelete $tempPath } catch { }
+        Invoke-FtpUploadFile -LocalPath $LocalPath -RemotePath $RemotePath -MaxAttempts $MaxAttempts
     }
 }
-
-Write-Host "Local Base Path: $resolvedLocal"
-Write-Host "Uploading $($files.Count) files from '$resolvedLocal' to 'ftp://$Server/$RemotePath'"
-if ($DryRun) {
-    Write-Host "DryRun is enabled. No remote changes will be made."
-}
-
-$uploaded = 0
-$skipped = 0
-
-foreach ($file in $files) {
-    $relative = $file.FullName
-    if ($relative.StartsWith($resolvedLocal, [System.StringComparison]::OrdinalIgnoreCase)) {
-        $relative = $relative.Substring($resolvedLocal.Length).TrimStart('\').TrimStart('/')
-    }
-    $relative = $relative.Replace('\', '/')
-
-    $shouldSkip = $false
-    foreach ($ex in $excluded) {
-        if ($relative.Equals($ex, [System.StringComparison]::OrdinalIgnoreCase) -or
-            $relative.StartsWith("$ex/", [System.StringComparison]::OrdinalIgnoreCase)) {
-            $shouldSkip = $true
-            break
-        }
-    }
-
-    if ($shouldSkip) {
-        $skipped++
-        Write-Host "Excluded: $relative"
-        continue
-    }
-
-    Upload-File -SourceFile $file.FullName -RelativePath $relative
-    $uploaded++
-}
-
-Write-Host "Upload complete. Uploaded/Checked: $uploaded, Excluded: $skipped"

@@ -1,7 +1,4 @@
-/**
- * API clients for the isolated production and script-test environments.
- * /demo uses the same backend process through the /demo namespace.
- */
+/** API client for the production backend. */
 
 const isLocalHost = typeof window !== 'undefined'
   && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -9,11 +6,8 @@ const isLocalHost = typeof window !== 'undefined'
 export const BASE_URL = import.meta.env.VITE_API_URL
   || (isLocalHost ? 'http://localhost:5000' : '');
 
-export const DEMO_BASE_URL = import.meta.env.VITE_DEMO_API_URL
-  || (isLocalHost ? 'http://localhost:5000/demo' : '/demo');
-
-export function createApiClient(baseUrl, environment = 'main') {
-  const accessKeyStorageName = `ats_${environment}_dashboard_access_key`;
+export function createApiClient(baseUrl) {
+  const accessKeyStorageName = 'ats_dashboard_access_key';
   const readAccessKey = () => {
     if (typeof window === 'undefined') return '';
     try {
@@ -55,8 +49,6 @@ export function createApiClient(baseUrl, environment = 'main') {
       if (typeof window !== 'undefined') window.sessionStorage.removeItem(accessKeyStorageName);
     },
     getStatus:     () => apiCall('/api/status'),
-    connectMT5:    () => apiCall('/api/connect', { method: 'POST' }),
-    disconnectMT5: () => apiCall('/api/disconnect', { method: 'POST' }),
     getAccount:    () => apiCall('/api/account'),
     getPrice:      () => apiCall('/api/price'),
     getPositions:  () => apiCall('/api/positions'),
@@ -75,7 +67,6 @@ export function createApiClient(baseUrl, environment = 'main') {
     getSignals:   () => apiCall('/api/signals'),
     clearSignals: () => apiCall('/api/signals/clear', { method: 'POST' }),
     getWebhookLog: () => apiCall('/api/webhook/log'),
-    getTradeAnalytics: (limit = 100) => apiCall(`/api/trade-analytics?limit=${limit}`),
     sendTestWebhook: (payload) => apiCall('/webhook', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -83,14 +74,10 @@ export function createApiClient(baseUrl, environment = 'main') {
   };
 }
 
-export const productionApi = createApiClient(BASE_URL, 'main');
-export const demoApi = createApiClient(DEMO_BASE_URL, 'demo');
-export const getApiClient = (isDemo = false) => isDemo ? demoApi : productionApi;
+export const productionApi = createApiClient(BASE_URL);
 
 // Backward-compatible production exports for components not mounted by App yet.
 export const getStatus = productionApi.getStatus;
-export const connectMT5 = productionApi.connectMT5;
-export const disconnectMT5 = productionApi.disconnectMT5;
 export const getAccount = productionApi.getAccount;
 export const getPrice = productionApi.getPrice;
 export const getPositions = productionApi.getPositions;
