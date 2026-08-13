@@ -25,10 +25,10 @@ input int      InpSlippage             = 20;                    // ระยะ 
 input int      InpMagic                = 88188;                 // หมายเลข Magic Number ของ EA สำหรับแยกแยะออเดอร์
 
 input group "== Algorithm Settings (Pure Structure + Liquidity/CHoCH/BOS/FVG/OB) =="
-input int      InpPivotLength          = 5;                     // จำนวนแท่งย้อนหลังสำหรับหาจุดกลับตัว Pivot
+input int      InpPivotLength          = 4;                     // จำนวนแท่งย้อนหลังสำหรับหาจุดกลับตัว Pivot
 input double   InpSLBuffer             = 1.0;                   // ระยะเผื่อของ Stop Loss จากจุดต่ำสุด/สูงสุด (Points)
 input int      InpMaxSLPips            = 12000;                 // ระยะ Stop Loss สูงสุดในโหมดคำนวณอัตโนมัติ (Points)
-input double   InpPDThreshold          = 0.618;                 // ระดับราคาเป้าหมาย Premium/Discount (ปกติ 0.618)
+input double   InpPDThreshold          = 0.700;                 // ระดับราคาเป้าหมาย Premium/Discount (ปกติ 0.618)
 
 enum ENUM_ENTRY_MODE {
    ENTRY_MODE_DISCOUNT_ONLY = 0, // Discount/Premium Only (Original 54% WR)
@@ -55,7 +55,7 @@ input bool     InpBreakoutAllowVolumeSpike     = true;           // Allow moment
 
 input group "== Scalping Risk =="
 input bool     InpUseFixedSL           = true;                  // เปิดใช้งานการตั้งค่า Stop Loss แบบคงที่
-input int      InpFixedSLPips          = 7000;                  // ระยะ Stop Loss แบบคงที่ (Points)
+input int      InpFixedSLPips          = 10000;                 // ระยะ Stop Loss แบบคงที่ (Points)
 
 input group "== Daily Loss Guard =="
 input bool     InpUseDailyLossGuard    = true;                  // Stop opening new trades after the daily loss limit
@@ -63,9 +63,9 @@ input int      InpMaxDailyLossCount    = 3;                     // Maximum losin
 input string   InpDailyLossTimezone    = "Asia/Bangkok";        // Daily reset timezone: UTC, Asia/Bangkok, America/New_York
 
 input group "== M5 Anti Fake-PA =="
-input double   InpPABodyMin            = 0.35;                  // อัตราส่วนเนื้อเทียนขั้นต่ำสำหรับยืนยัน Price Action
-input double   InpPAWickMax            = 0.60;                  // อัตราส่วนไส้เทียนสูงสุดสำหรับยืนยัน Price Action
-input double   InpPACloseMin           = 0.45;                  // สัดส่วนตําแหน่งราคาปิดเทียนขั้นต่ำสำหรับคอนเฟิร์ม
+input double   InpPABodyMin            = 0.20;                  // อัตราส่วนเนื้อเทียนขั้นต่ำสำหรับยืนยัน Price Action
+input double   InpPAWickMax            = 0.65;                  // อัตราส่วนไส้เทียนสูงสุดสำหรับยืนยัน Price Action
+input double   InpPACloseMin           = 0.60;                  // สัดส่วนตําแหน่งราคาปิดเทียนขั้นต่ำสำหรับคอนเฟิร์ม
 input bool     InpPAEngulf             = true;                  // บังคับให้เกิดแท่งกลืนกิน (Engulfing Close)
 
 input group "== Position Sizing (Fixed 0.05 lot per trade) =="
@@ -99,16 +99,16 @@ input int      InpVolSpikeLookback     = 1;                     // ระยะ�
 input group "== Sideway & Range Filters =="
 input bool     InpUseADXFilter         = true;                  // เปิดใช้งานตัวกรองความแรงของเทรนด์ด้วย ADX
 input int      InpADXLen               = 14;                    // ความยาวอินดิเคเตอร์ ADX
-input double   InpADXMinThreshold      = 18.0;                  // ค่าความแรงเทรนด์ ADX ขั้นต่ำที่อนุญาตให้เทรด
+input double   InpADXMinThreshold      = 14.0;                  // ค่าความแรงเทรนด์ ADX ขั้นต่ำที่อนุญาตให้เทรด
 input bool     InpUseChopFilter        = true;                  // เปิดใช้งานตัวกรองตลาดไซด์เวย์ด้วย Choppiness Index
 input int      InpChopLen              = 14;                    // ความยาวอินดิเคเตอร์ Choppiness Index
-input double   InpChopMaxThreshold     = 62.0;                  // ค่าสูงสุดของ CHOP ที่อนุญาต (หลีกเลี่ยงไซด์เวย์จัด)
+input double   InpChopMaxThreshold     = 70.0;                  // ค่าสูงสุดของ CHOP ที่อนุญาต (หลีกเลี่ยงไซด์เวย์จัด)
 input bool     InpUseATRFilter         = true;                  // เปิดใช้งานตัวกรองภาวะตลาดบีบตัวแรงด้วย ATR Ratio
-input double   InpATRMinRatio          = 0.75;                  // อัตราส่วนความผันผวน ATR เทียบกับเส้นเฉลี่ย 50 วัน
+input double   InpATRMinRatio          = 0.95;                  // อัตราส่วนความผันผวน ATR เทียบกับเส้นเฉลี่ย 50 วัน
 
 input group "== Loss Cooldown Filter =="
 input bool     InpUseLossCooldown      = true;                  // พักเปิดไม้ใหม่หลังปิดสถานะขาดทุน
-input int      InpLossCooldownMins     = 45;                    // ระยะเวลาพักหลังไม้แพ้ (นาที)
+input int      InpLossCooldownMins     = 75;                    // ระยะเวลาพักหลังไม้แพ้ (นาที)
 
 input group "== Early Exit Management =="
 input bool     InpUseEarlyExit         = true;                  // ปิดสถานะก่อนถึง Hard SL เมื่อโครงสร้างเสีย
@@ -121,14 +121,14 @@ input int      InpTimeStopBars         = 20;                    // จำนว�
 input double   InpEarlyExitRiskR       = 0.65;                  // ขาดทุนถึงสัดส่วน R นี้ให้ข้ามเวลายืนยันเมื่อมีสัญญาณเสีย
 
 input group "== Breakeven & Scaled Trailing Stop =="
-input int      InpBEPips               = 8000;                  // ระยะกำไรที่เริ่มเปิดใช้งานล็อคทุน Breakeven (Points)
+input int      InpBEPips               = 5000;                  // ระยะกำไรที่เริ่มเปิดใช้งานล็อคทุน Breakeven (Points)
 input int      InpBELowVolPips         = 5000;                  // ระยะกำไรที่ล็อคทุนเมื่อ Volume ต่ำ (Points)
 input int      InpBECostBufferPoints   = 200;                   // Profit locked at BE to cover commission/fees (symbol points)
 input bool     InpUseAdaptiveBE        = true;                  // เปิดใช้งาน Adaptive BE
 input int      InpTrailLevel1Pips      = 15000;                 // ระยะกำไรที่เริ่มรัน Trailing Stop เลื่อนตามราคา (Points)
 input int      InpTrailLevel1LockPips  = 7000;                  // ระยะล็อกกำไรขั้นต่ำของ Trailing Stop (Points)
 input bool     InpUseSteppedTrail      = true;                  // ใช้ Trailing Stop แบบขยับตามระยะห่าง (true) หรือแบบตายตัว (false)
-input int      InpTPPips               = 42000;                 // ระยะเป้าหมายในการปิดทำกำไรสูงสุด Take Profit (Points)
+input int      InpTPPips               = 37500;                 // ระยะเป้าหมายในการปิดทำกำไรสูงสุด Take Profit (Points)
 
 input group "== Force Close Settings =="
 input bool     InpUseForceClose        = true;                  // เปิดใช้งานระบบปิดออเดอร์ทั้งหมดโดยบังคับตามเวลา
