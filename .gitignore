@@ -70,6 +70,7 @@ dist/
 build/
 out/
 .next/
+scratch/
 
 # Retext language server typescript plugin
 .retext/
@@ -83,6 +84,7 @@ out/
 .env.test.local
 .env.production.local
 .env*.local
+.ex5
 
 # Application configuration containing credentials or machine-specific values
 **/appsettings.json

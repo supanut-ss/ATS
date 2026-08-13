@@ -113,6 +113,13 @@ input int      InpMaxSpreadPoints    = 250;     // Maximum entry spread in platf
 input ulong    InpMagicNumber        = 26080601;
 input int      InpDeviationPoints    = 30;
 
+input group "== Dashboard API heartbeat =="
+input bool     InpEnableHeartbeat    = true;    // Send MT5 state to the dashboard API
+input string   InpBackendURL         = "https://ats.thaipesleague.com";
+input string   InpAuthToken          = "ats_sec_9f5c4b8e2a1d7f0e3c6b8a9f";
+input int      InpHeartbeatSeconds   = 30;      // Heartbeat interval in seconds
+input int      InpWebRequestTimeoutMs= 3000;
+
 struct SRLevel
 {
    double price;
@@ -178,27 +185,7 @@ long     g_bar_serial = 0;
 long     g_last_trade_serial = -1000000;
 datetime g_last_open_time = 0;
 bool     g_state_ready = false;
-TradeTelemetry g_trade_telemetry[];
-string   g_exit_reason_override = "";
-ulong    g_exit_reason_position_id = 0;
-bool     g_demo_analytics_active = false;
-ulong    g_last_close_attempt_position_id = 0;
-ulong    g_last_close_attempt_ms = 0;
-ulong    g_counted_position_ids[];
-ulong    g_pending_exit_position_ids[];
-bool     g_level_trade_state_ready = false;
-bool     g_outbox_writable = true;
-bool     g_pending_entry_active = false;
-ulong    g_pending_entry_order = 0;
-ulong    g_pending_entry_since_ms = 0;
-int      g_pending_entry_direction = 0;
-double   g_pending_entry_level_price = 0.0;
-datetime g_pending_entry_pivot_time = 0;
-double   g_pending_entry_atr = 0.0;
-double   g_pending_entry_initial_sl = 0.0;
-double   g_pending_entry_initial_tp = 0.0;
-double   g_pending_entry_requested_volume = 0.0;
-double   g_pending_entry_spread_points = 0.0;
+string   g_backend_url = "";
 
 //+------------------------------------------------------------------+
 double TickSize()
@@ -207,6 +194,22 @@ double TickSize()
    if(value <= 0.0)
       value = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    return value;
+}
+
+// Normalize an order price to the symbol's executable tick grid.  Rounding
+// away from the entry prevents normalization from making a stop too close.
+double NormalizeStopPrice(const double price, const bool round_up)
+{
+   const double tick = TickSize();
+   if(tick <= 0.0)
+      return 0.0;
+
+   const double ticks = price / tick;
+   const double normalized = round_up
+                             ? MathCeil(ticks - 1e-10) * tick
+                             : MathFloor(ticks + 1e-10) * tick;
+   return NormalizeDouble(normalized,
+                          (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
 }
 
 //+------------------------------------------------------------------+
@@ -224,19 +227,84 @@ double NormalizeVolume(const double requested)
 }
 
 //+------------------------------------------------------------------+
-double NormalizeVolumeDown(const double requested)
+string BuildHeartbeatJson()
 {
-   const double minimum = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   const double maximum = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-   const double step    = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   if(step <= 0.0 || requested < minimum)
-      return 0.0;
+   const double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   const double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   const double free_margin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
 
-   double volume = MathFloor(requested / step + 1e-9) * step;
-   volume = MathMin(maximum, volume);
-   if(volume < minimum)
-      return 0.0;
-   return NormalizeDouble(volume, 8);
+   MqlTick quote;
+   ZeroMemory(quote);
+   SymbolInfoTick(_Symbol, quote);
+
+   string positions = "[";
+   int included = 0;
+   for(int i = 0; i < PositionsTotal(); ++i)
+   {
+      const ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+
+      if(included > 0)
+         positions += ",";
+
+      const string type = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+                          ? "BUY" : "SELL";
+      positions += StringFormat(
+         "{\"ticket\":\"%s\",\"symbol\":\"%s\",\"type\":\"%s\","+
+         "\"volume\":%s,\"open_price\":%s,\"current_price\":%s,"+
+         "\"sl\":%s,\"tp\":%s,\"profit\":%s}",
+         IntegerToString((long)ticket),
+         PositionGetString(POSITION_SYMBOL), type,
+         DoubleToString(PositionGetDouble(POSITION_VOLUME), 8),
+         DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN), 8),
+         DoubleToString(PositionGetDouble(POSITION_PRICE_CURRENT), 8),
+         DoubleToString(PositionGetDouble(POSITION_SL), 8),
+         DoubleToString(PositionGetDouble(POSITION_TP), 8),
+         DoubleToString(PositionGetDouble(POSITION_PROFIT) +
+                        PositionGetDouble(POSITION_SWAP), 2));
+      ++included;
+   }
+   positions += "]";
+
+   return StringFormat(
+      "{\"token\":\"%s\",\"balance\":%s,\"equity\":%s,"+
+      "\"free_margin\":%s,\"bid\":%s,\"ask\":%s,\"positions\":%s}",
+      InpAuthToken,
+      DoubleToString(balance, 2), DoubleToString(equity, 2),
+      DoubleToString(free_margin, 2), DoubleToString(quote.bid, _Digits),
+      DoubleToString(quote.ask, _Digits), positions);
+}
+
+//+------------------------------------------------------------------+
+bool SendHeartbeat()
+{
+   if(!InpEnableHeartbeat)
+      return true;
+
+   const string url = g_backend_url + "/api/signals/pending";
+   const string headers = "Content-Type: application/json\r\n";
+   const string payload = BuildHeartbeatJson();
+   char request_data[], response_data[];
+   string response_headers;
+   StringToCharArray(payload, request_data, 0, StringLen(payload), CP_UTF8);
+
+   ResetLastError();
+   const int http_status = WebRequest("POST", url, headers,
+                                      InpWebRequestTimeoutMs, request_data,
+                                      response_data, response_headers);
+   if(http_status == 200)
+      return true;
+
+   const int error = GetLastError();
+   const string response = CharArrayToString(response_data, 0, WHOLE_ARRAY, CP_UTF8);
+   if(http_status == -1 && error == 4014)
+      PrintFormat("S/R EA heartbeat: allow '%s' in Tools > Options > Expert Advisors > WebRequest.",
+                  g_backend_url);
+   else
+      PrintFormat("S/R EA heartbeat failed: HTTP=%d, error=%d, response=%s",
+                  http_status, error, response);
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -2489,7 +2557,7 @@ bool OpenSignalTrade(const int direction, const double level_price,
    {
       const double sl_distance = InpStopLossPips * point;
       sl = (direction > 0) ? entry - sl_distance : entry + sl_distance;
-      sl = NormalizeDouble(sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+      sl = NormalizeStopPrice(sl, direction < 0);
    }
    else if(!FindMoneyPrice(order_type, volume, entry, InpStopLossMoney, false, sl))
    {
@@ -2499,30 +2567,9 @@ bool OpenSignalTrade(const int direction, const double level_price,
 
    if(InpUseATRAdjustedStop && InpStopLossPips <= 0 && InpMinimumStopATR > 0.0)
    {
-      const double tick = TickSize();
-      const double fixed_distance = MathAbs(entry - sl);
-      double stop_distance = MathMax(fixed_distance, InpMinimumStopATR * atr);
-      stop_distance = MathCeil(stop_distance / tick - 1e-10) * tick;
-      const double volatility_sl = NormalizeDouble(
-         (direction > 0 ? entry - stop_distance : entry + stop_distance),
-         (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-      double one_lot_loss = 0.0;
-      if(!ProfitAtPrice(order_type, 1.0, entry, volatility_sl, one_lot_loss) ||
-         one_lot_loss >= 0.0)
-      {
-         Print("S/R EA: cannot calculate ATR-adjusted risk; signal skipped.");
-         return false;
-      }
-
-      const double risk_limited_volume = NormalizeVolumeDown(
-         InpStopLossMoney / MathAbs(one_lot_loss));
-      if(risk_limited_volume <= 0.0)
-      {
-         Print("S/R EA: minimum broker volume exceeds ATR-adjusted risk; signal skipped.");
-         return false;
-      }
-      volume = MathMin(volume, risk_limited_volume);
-      sl = volatility_sl;
+      const double tp_distance = InpTakeProfitPips * point;
+      tp = (direction > 0) ? entry + tp_distance : entry - tp_distance;
+      tp = NormalizeStopPrice(tp, direction > 0);
    }
 
    if(InpExitMode == 0)
@@ -2757,7 +2804,7 @@ void ManageDynamicExits()
 //+------------------------------------------------------------------+
 // Check if closed bar shift experienced a Bullish Rejection at Support Zone
 bool IsBullishRejection(const int shift, const double support_price,
-                        const double zone_half_width)
+                        const double zone_width)
 {
    const double open_p  = iOpen(_Symbol, _Period, shift);
    const double high_p  = iHigh(_Symbol, _Period, shift);
@@ -2801,7 +2848,7 @@ bool IsBullishRejection(const int shift, const double support_price,
 //+------------------------------------------------------------------+
 // Check if closed bar shift experienced a Bearish Rejection at Resistance Zone
 bool IsBearishRejection(const int shift, const double resist_price,
-                        const double zone_half_width)
+                        const double zone_width)
 {
    const double open_p  = iOpen(_Symbol, _Period, shift);
    const double high_p  = iHigh(_Symbol, _Period, shift);
@@ -2853,10 +2900,11 @@ bool IsCandleTooLarge(const int shift, const double atr)
 // Process one completed confirmation bar. Historical bars rebuild state only.
 void ProcessClosedBar(const int confirmation_shift, const bool allow_trade)
 {
-   ++g_bar_serial;
    double atr = 0.0;
    if(!GetATR(confirmation_shift, atr))
       return;
+
+   ++g_bar_serial;
 
    PruneOldLevels();
 
@@ -2974,16 +3022,7 @@ void ProcessClosedBar(const int confirmation_shift, const bool allow_trade)
       return;
    }
 
-   int stats_wins, stats_losses, stats_break_evens, active_loss_streak;
-   datetime stats_last_exit;
-   if(!GetClosedTradeStats(stats_wins, stats_losses, stats_break_evens,
-                           active_loss_streak, stats_last_exit))
-   {
-      Print("S/R EA: entry blocked because recovery history is incomplete.");
-      return;
-   }
-   const bool recovery_active = (InpRecoveryStartLossStreak > 0 &&
-                                 active_loss_streak >= InpRecoveryStartLossStreak);
+   const double zone_width = InpZoneWidthATR * atr;
    for(int i = ArraySize(g_levels) - 1; i >= 0; --i)
    {
       if(CountOurPositions() >= InpMaxOpenPositions)
@@ -3011,7 +3050,7 @@ void ProcessClosedBar(const int confirmation_shift, const bool allow_trade)
 
       if(g_levels[i].type == -1 && buy_permission)
       {
-         if(IsBullishRejection(confirmation_shift, g_levels[i].price, zone_half_width))
+         if(IsBullishRejection(confirmation_shift, g_levels[i].price, zone_width))
          {
             if(OpenSignalTrade(1, g_levels[i].price, g_levels[i].pivot_time, atr))
             {
@@ -3021,7 +3060,7 @@ void ProcessClosedBar(const int confirmation_shift, const bool allow_trade)
       }
       else if(g_levels[i].type == 1 && sell_permission)
       {
-         if(IsBearishRejection(confirmation_shift, g_levels[i].price, zone_half_width))
+         if(IsBearishRejection(confirmation_shift, g_levels[i].price, zone_width))
          {
             if(OpenSignalTrade(-1, g_levels[i].price, g_levels[i].pivot_time, atr))
             {
@@ -3044,7 +3083,10 @@ bool RebuildLevelState()
       return false;
 
    int oldest_shift = InpMaxLevelAgeBars + InpPivotLength + InpATRPeriod + 10;
-   oldest_shift = MathMin(oldest_shift, bars - InpPivotLength - 2);
+   // IsPivotHigh/Low inspect PivotLength bars on both sides of pivot_shift.
+   oldest_shift = MathMin(oldest_shift, bars - (InpPivotLength * 2) - 1);
+   if(oldest_shift < 1)
+      return false;
    if(BarsCalculated(g_atr_handle) <= oldest_shift)
       return false;
 
@@ -3059,50 +3101,12 @@ int OnInit()
    if(InpPivotLength < 2 || InpATRPeriod < 1 || InpMaxLevelAgeBars < 20 ||
       InpMaxLevelsEachSide < 1 || InpMergeThresholdATR < 0.0 ||
       InpBreakSensitivityATR < 0.0 || InpZoneWidthATR < 0.0 ||
-      InpMinRetestDelayBars < 0 || InpRecoveryStartLossStreak < 0 ||
-      InpRecoveryMinRetestDelayBars < 0 ||
-      InpRecoverySideMode < 0 || InpRecoverySideMode > 2 ||
-      InpMaxTradesPerLevel < 1 ||
-      InpSameLevelCooldownBars < 0 || InpRearmDistanceATR < 0.0 ||
-      InpMinBodyRangeRatio < 0.0 ||
-       InpMinBodyRangeRatio > 1.0 || InpMinWickRangeRatio < 0.0 ||
-       InpMinWickRangeRatio > 1.0 || InpMinCloseLocation < 0.5 ||
-       InpMinCloseLocation > 1.0 || InpMaxCandleATRRatio < 0.0 ||
-       InpEMAPeriod < 2 || InpEMASlopeBars < 1 ||
-      InpAutoBuyEMAPeriod < 2 || InpAutoBuySlopeBars < 1 ||
-      InpAutoBuyMinSlopeATR < 0.0 || InpAutoBuyMinDistanceATR < 0.0 ||
-      InpAutoBuyStartHour < 0 || InpAutoBuyStartHour > 23 ||
-      InpAutoBuyEndHour < 0 || InpAutoBuyEndHour > 24 ||
-      InpAutoBuyPauseStartHour < 0 || InpAutoBuyPauseStartHour > 23 ||
-      InpAutoBuyPauseEndHour < 0 || InpAutoBuyPauseEndHour > 24 ||
-      InpBuyMinBodyRangeRatio < 0.0 || InpBuyMinBodyRangeRatio > 1.0 ||
-      InpBuyMinWickRangeRatio < 0.0 || InpBuyMinWickRangeRatio > 1.0 ||
-      InpBuyMinCloseLocation < 0.5 || InpBuyMinCloseLocation > 1.0 ||
-      InpAutoSellRegimeMode < 0 || InpAutoSellRegimeMode > 2 ||
-      InpSessionStartHour < 0 || InpSessionStartHour > 23 ||
-      InpSessionEndHour < 0 || InpSessionEndHour > 24 || InpCooldownBars < 0 ||
-      InpMaxDailyLosses < 0 || InpPauseAfterLossMinutes < 0 ||
-      InpMaxConsecutiveLosses < 0 ||
-      InpLossStreakPauseBars < 0 || InpBreakEvenThresholdMoney < 0.0 ||
-      InpCloseBeforeDailyMinutes < 0 || InpCloseBeforeWeekendMinutes < 0 ||
-      InpBlockEntriesBeforeCloseMinutes < 0 ||
-      InpBlockAfterSessionOpenMinutes < 0 || InpScheduleTimerSeconds < 1 ||
-      InpHardDailyCloseHour < 0 || InpHardDailyCloseHour > 23 ||
-      InpHardDailyCloseMinute < 0 || InpHardDailyCloseMinute > 59 ||
-      InpHardFridayCloseHour < 0 || InpHardFridayCloseHour > 23 ||
-      InpHardFridayCloseMinute < 0 || InpHardFridayCloseMinute > 59 ||
-      InpHolidayEarlyCloseHour < 0 || InpHolidayEarlyCloseHour > 23 ||
-      InpHolidayEarlyCloseMinute < 0 || InpHolidayEarlyCloseMinute > 59 ||
-      InpMinimumStopATR < 0.0 ||
-      InpExitMode < 0 || InpExitMode > 2 ||
-      InpBreakEvenActivationMoney <= 0.0 || InpBreakEvenLockMoney < 0.0 ||
-      InpBreakEvenLockMoney >= InpBreakEvenActivationMoney ||
-      InpTrailActivationMoney < InpBreakEvenActivationMoney ||
-       InpTrailATRMultiplier <= 0.0 || InpStructureExitMinProfitMoney < 0.0 ||
-       InpFixedLot <= 0.0 || InpMaxOpenPositions < 1 ||
-       InpMaxSpreadPoints < 0 || InpDeviationPoints < 0 ||
+      InpFixedLot <= 0.0 || InpMaxOpenPositions < 1 ||
       (InpStopLossPips <= 0 && InpStopLossMoney <= 0.0) ||
-      (InpExitMode == 0 && InpTakeProfitPips <= 0 && InpTakeProfitMoney <= 0.0))
+      (InpTakeProfitPips <= 0 && InpTakeProfitMoney <= 0.0) ||
+      (InpEnableHeartbeat &&
+       (StringLen(InpBackendURL) == 0 || StringLen(InpAuthToken) == 0 ||
+        InpHeartbeatSeconds < 1 || InpWebRequestTimeoutMs < 100)))
    {
       Print("S/R EA: invalid inputs.");
       return INIT_PARAMETERS_INCORRECT;
@@ -3191,6 +3195,27 @@ int OnInit()
    g_trade.SetTypeFillingBySymbol(_Symbol);
    g_trade.SetAsyncMode(false);
 
+   g_backend_url = InpBackendURL;
+   while(StringLen(g_backend_url) > 0 &&
+         StringSubstr(g_backend_url, StringLen(g_backend_url) - 1, 1) == "/")
+      g_backend_url = StringSubstr(g_backend_url, 0, StringLen(g_backend_url) - 1);
+
+   if(InpEnableHeartbeat)
+   {
+      if(MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION))
+         Print("S/R EA heartbeat: disabled in Strategy Tester/optimization.");
+      else
+      {
+         if(!EventSetTimer(InpHeartbeatSeconds))
+         {
+            PrintFormat("S/R EA heartbeat: cannot start timer. error=%d", GetLastError());
+            return INIT_FAILED;
+         }
+         // Send immediately; the dashboard does not need to wait for tick/bar logic.
+         SendHeartbeat();
+      }
+   }
+
    g_last_open_time = iTime(_Symbol, _Period, 0);
    g_state_ready = RebuildLevelState();
    g_level_trade_state_ready = (g_state_ready &&
@@ -3215,7 +3240,6 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   SaveTelemetryOutbox();
    EventKillTimer();
    if(g_atr_handle != INVALID_HANDLE)
       IndicatorRelease(g_atr_handle);
@@ -3304,6 +3328,14 @@ void OnTimer()
 }
 
 //+------------------------------------------------------------------+
+void OnTimer()
+{
+   if(MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION))
+      return;
+   SendHeartbeat();
+}
+
+//+------------------------------------------------------------------+
 void OnTick()
 {
    TrackOpenTradeTelemetry();
@@ -3347,6 +3379,13 @@ void OnTick()
    if(closed_bars < 1)
       closed_bars = 1;
    closed_bars = MathMin(closed_bars, InpMaxLevelAgeBars);
+
+   // Do not advance the bar cursor until ATR data for every missed bar is
+   // available. Otherwise a transient CopyBuffer failure loses that signal.
+   double atr_ready[];
+   if(BarsCalculated(g_atr_handle) <= closed_bars ||
+      CopyBuffer(g_atr_handle, 0, 1, closed_bars, atr_ready) != closed_bars)
+      return;
 
    // Rebuild missed closed bars in order, but only the latest signal may trade.
    for(int shift = closed_bars; shift >= 1; --shift)
