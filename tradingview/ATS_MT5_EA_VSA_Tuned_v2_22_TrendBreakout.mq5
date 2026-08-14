@@ -615,7 +615,7 @@ int fvg_bull_age = -1, fvg_bear_age = -1;
 int ob_bull_age = -1, ob_bear_age = -1;
 
 //--- Tracked positions
-struct TrackedPosition { ulong ticket; ulong identifier; string symbol; string action; double volume; double open_price; double sl; double tp; string comment; };
+struct TrackedPosition { ulong ticket; ulong identifier; string symbol; string action; double volume; double open_price; double sl; double tp; string comment; string exit_reason; };
 TrackedPosition tracked_positions[];
 int tracked_count = 0;
 
@@ -719,11 +719,13 @@ void ForceCloseAllPositions()
       if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
       if(PositionGetString(POSITION_SYMBOL) != Symbol()) continue;
       
+      ulong identifier = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
       Print("ATS EA: Force Closing position #", ticket, " due to Force Close Time.");
       ResetLastError();
       bool close_request_ok = trade.PositionClose(ticket);
       if(IsTradeResultSuccessful(close_request_ok, "Force close", ticket))
       {
+         SetTrackedExitReason(identifier, ticket, "Force Close");
          Print("ATS EA: Position #", ticket, " closed successfully.");
       }
       else
@@ -754,6 +756,23 @@ void RemoveTrackedPosition(int idx)
    for(int i = idx; i < tracked_count-1; i++) tracked_positions[i] = tracked_positions[i+1];
    tracked_count--;
    ArrayResize(tracked_positions, tracked_count);
+}
+
+// Record why the EA itself closed a position, so SyncPositionsWithBackend can
+// report the real cause instead of guessing once the position has vanished.
+void SetTrackedExitReason(const ulong identifier, const ulong ticket, const string reason)
+{
+   for(int j = 0; j < tracked_count; j++)
+   {
+      bool same_position = identifier > 0
+                           ? tracked_positions[j].identifier == identifier
+                           : tracked_positions[j].ticket == ticket;
+      if(same_position)
+      {
+         tracked_positions[j].exit_reason = reason;
+         return;
+      }
+   }
 }
 
 bool GetClosedPositionResult(const ulong position_identifier,
@@ -799,7 +818,7 @@ void SendLocalTradeToBackend(string id, string action, string symbol, double vol
                              ulong ticket, double exit_price, double profit,
                              double mfe = 0.0, double mae = 0.0, double adx = 0.0,
                              double chop = 0.0, double atr_ratio = 0.0, bool is_low_vol = false,
-                             string entry_condition = "")
+                             string entry_condition = "", string exit_reason = "")
 {
    if(!IsExternalIntegrationAllowed()) return;
    string url  = backend_url + "/api/signals/local";
@@ -808,7 +827,7 @@ void SendLocalTradeToBackend(string id, string action, string symbol, double vol
                               "\"volume\":%s,\"entry_price\":%s,\"sl\":%s,\"tp\":%s,"
                               "\"status\":\"%s\",\"ticket\":\"%s\",\"exit_price\":%s,\"profit\":%s,"
                               "\"mfe\":%s,\"mae\":%s,\"adx\":%s,\"chop\":%s,\"atr_ratio\":%s,\"is_low_vol\":%s,"
-                              "\"entry_condition\":\"%s\"}",
+                              "\"entry_condition\":\"%s\",\"exit_reason\":\"%s\"}",
                               auth_token, id, action, symbol,
                               DoubleToString(volume,2), DoubleToString(entry_price,2),
                               DoubleToString(sl,2), DoubleToString(tp,2),
@@ -816,12 +835,31 @@ void SendLocalTradeToBackend(string id, string action, string symbol, double vol
                               DoubleToString(exit_price,2), DoubleToString(profit,2),
                               DoubleToString(mfe,5), DoubleToString(mae,5), DoubleToString(adx,2),
                               DoubleToString(chop,2), DoubleToString(atr_ratio,3), is_low_vol ? "true" : "false",
-                              entry_condition);
+                              entry_condition, exit_reason);
    char pd[], rd[]; string rh;
    StringToCharArray(pay, pd, 0, StringLen(pay), CP_UTF8);
    ResetLastError();
    int h = WebRequest("POST", url, hdr, 3000, pd, rd, rh);
    if(h != 200) Print("ATS EA ERROR: Local sync HTTP=", h, " err=", GetLastError());
+}
+
+// Best-effort cause for a close the EA did not itself request (broker-side
+// stop out / take profit, or a manual close from outside the EA).
+string InferBrokerExitReason(const string symbol, const string action,
+                             const double exit_price, const double sl, const double tp)
+{
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   double tolerance = point > 0.0 ? 20.0 * point : 0.0;
+   bool is_buy = action == "BUY";
+   if(sl > 0.0 && MathAbs(exit_price - sl) <= tolerance)
+      return "Stop Loss";
+   if(tp > 0.0 && MathAbs(exit_price - tp) <= tolerance)
+      return "Take Profit";
+   if(sl > 0.0 && (is_buy ? exit_price <= sl : exit_price >= sl))
+      return "Stop Loss";
+   if(tp > 0.0 && (is_buy ? exit_price >= tp : exit_price <= tp))
+      return "Take Profit";
+   return "Manual/Other";
 }
 
 void SyncPositionsWithBackend()
@@ -927,11 +965,20 @@ void SyncPositionsWithBackend()
          if(GlobalVariableCheck(atr_key)) atr_ratio = GlobalVariableGet(atr_key);
          if(GlobalVariableCheck(low_vol_key)) low_vol = true;
 
+         // The EA records its own close reason when it initiates the close
+         // (early exit, failed breakout, force close). Anything else vanished
+         // via the broker (SL/TP hit or a manual close) and must be inferred.
+         string exit_reason = tracked_positions[j].exit_reason != ""
+                              ? tracked_positions[j].exit_reason
+                              : InferBrokerExitReason(tracked_positions[j].symbol, tracked_positions[j].action,
+                                                       ep, tracked_positions[j].sl, tracked_positions[j].tp);
+
          SendLocalTradeToBackend(tk_str, tracked_positions[j].action,
                                  tracked_positions[j].symbol, tracked_positions[j].volume,
                                  tracked_positions[j].open_price, tracked_positions[j].sl,
                                  tracked_positions[j].tp, stat, tk, ep, pf,
-                                 mfe, mae, adx, chop, atr_ratio, low_vol, tracked_positions[j].comment);
+                                 mfe, mae, adx, chop, atr_ratio, low_vol, tracked_positions[j].comment,
+                                 exit_reason);
 
          if(GlobalVariableCheck(max_price_key)) GlobalVariableDel(max_price_key);
          if(GlobalVariableCheck(min_price_key)) GlobalVariableDel(min_price_key);
@@ -1809,6 +1856,7 @@ bool ManageFailedBreakoutExit(const double closed_price)
       bool close_request_ok = trade.PositionClose(ticket);
       if(IsTradeResultSuccessful(close_request_ok, "Failed breakout exit", ticket))
       {
+         SetTrackedExitReason(analytics_identity, ticket, "Failed Breakout");
          string retry_key = GetAnalyticsKey("BO_RETRY", analytics_identity);
          bool was_retry = GlobalVariableCheck(retry_key);
          if(!was_retry)
@@ -1912,10 +1960,12 @@ bool ManageEarlyExit(double closed_price,
             " reason=", reason, " confirm=", confirmed_bars,
             " adverseR=", DoubleToString(adverse_r, 2), " heldBars=", held_bars);
 
+      ulong identifier = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
       ResetLastError();
       bool close_request_ok = trade.PositionClose(ticket);
       if(IsTradeResultSuccessful(close_request_ok, "Early exit", ticket))
       {
+         SetTrackedExitReason(identifier, ticket, reason);
          GlobalVariableDel(risk_key);
          closed_any = true;
       }

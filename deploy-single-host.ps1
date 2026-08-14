@@ -51,7 +51,7 @@
     # ขั้นตอนที่ 1: กำหนดรหัสผ่านใน Environment (ทำครั้งเดียวตอนเปิดหน้าจอ Terminal)
     $env:FTP_SERVER = "94.237.76.153"
     $env:FTP_USER   = "thaipes"
-    $env:FTP_PASS   = "รหัสผ่านของคุณ"
+    $env:FTP_PASS   = "Ws7#3es2"
     $env:FTP_REMOTE = "ats.thaipesleague.com"
 
     # ขั้นตอนที่ 2: รันแบบทดสอบ (เพื่อดูว่ามีไฟล์อะไรจะอัปเดตบ้าง โดยไม่กระทบของจริง)
@@ -64,9 +64,9 @@
     .\deploy-single-host.ps1 -ForceUnlock
 #>
 param(
-    [string]$Server     = $env:FTP_SERVER,
-    [string]$Username   = $env:FTP_USER,
-    [string]$Password   = $env:FTP_PASS,
+    [string]$Server = $env:FTP_SERVER,
+    [string]$Username = $env:FTP_USER,
+    [string]$Password = $env:FTP_PASS,
     [string]$RemotePath = $env:FTP_REMOTE,
     [switch]$UseTls,
     [switch]$DryRun,
@@ -80,11 +80,11 @@ $ErrorActionPreference = "Stop"
 if (-not $RemotePath) { $RemotePath = "ats.thaipesleague.com" }
 $RemotePath = $RemotePath.Replace('\', '/').TrimEnd('/')
 
-$repoRoot      = $PSScriptRoot
+$repoRoot = $PSScriptRoot
 $BACKEND_LOCAL = "$repoRoot\deploy\backend"
-$LOCK_REMOTE   = "$RemotePath/.deploy-lock"
+$LOCK_REMOTE = "$RemotePath/.deploy-lock"
 $MANIFEST_REMOTE = "$RemotePath/.deploy-manifest.json"
-$OFFLINE_REMOTE  = "$RemotePath/app_offline.htm"
+$OFFLINE_REMOTE = "$RemotePath/app_offline.htm"
 
 . "$repoRoot\upload-ftp.ps1"
 
@@ -115,9 +115,11 @@ function Test-ProtectedPath ([string]$RelPath) {
         if ($pat.EndsWith('/')) {
             if ($rp -eq $pat.TrimEnd('/') -or
                 $rp.StartsWith($pat, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
-        } elseif ($pat.Contains('*')) {
+        }
+        elseif ($pat.Contains('*')) {
             if ($rp -like $pat) { return $true }
-        } else {
+        }
+        else {
             if ($rp -ieq $pat -or
                 $rp.StartsWith("$pat/", [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
         }
@@ -126,8 +128,8 @@ function Test-ProtectedPath ([string]$RelPath) {
 }
 
 # --- State tracking (for cleanup on error) -----------------------------------
-$script:OwnLock    = $false
-$script:TempFiles  = [System.Collections.Generic.List[string]]::new()
+$script:OwnLock = $false
+$script:TempFiles = [System.Collections.Generic.List[string]]::new()
 $script:SiteOffline = $false
 
 # --- Git helpers -------------------------------------------------------------
@@ -142,24 +144,28 @@ function Invoke-AcquireLock {
 
     $existing = Get-FtpFileContent $LOCK_REMOTE
     if ($existing) {
-        try   { $lk = $existing | ConvertFrom-Json } catch { $lk = $null }
-        $age  = if ($lk.started) {
-                    ([datetime]::Now - [datetime]::Parse($lk.started)).TotalMinutes
-                } else { $LockTimeoutMinutes + 1 }
+        try { $lk = $existing | ConvertFrom-Json } catch { $lk = $null }
+        $age = if ($lk.started) {
+            ([datetime]::Now - [datetime]::Parse($lk.started)).TotalMinutes
+        }
+        else { $LockTimeoutMinutes + 1 }
         $info = "machine='$($lk.machine)' user='$($lk.user)' commit='$($lk.commit)' started='$($lk.started)'"
 
         if ($age -gt $LockTimeoutMinutes) {
             if ($ForceUnlock) {
                 Write-Warn "Stale lock ($([int]$age) min old) -- removing. $info"
                 Invoke-FtpDelete $LOCK_REMOTE
-            } else {
+            }
+            else {
                 Write-Err "Lock is stale ($([int]$age) min old) but -ForceUnlock not used. $info"
                 exit 1
             }
-        } elseif ($ForceUnlock) {
+        }
+        elseif ($ForceUnlock) {
             Write-Warn "Lock is ACTIVE but -ForceUnlock used -- removing anyway. $info"
             Invoke-FtpDelete $LOCK_REMOTE
-        } else {
+        }
+        else {
             Write-Err "Deployment is currently running ($([int]$age) min old). $info"
             Write-Err "Use -ForceUnlock ONLY if you are sure it crashed."
             exit 1
@@ -197,11 +203,13 @@ function Invoke-ReleaseLock {
                 Invoke-FtpDelete $LOCK_REMOTE
                 $script:OwnLock = $false
                 Write-Ok "Lock released."
-            } else {
+            }
+            else {
                 Write-Warn "Lock ownership changed -- not deleting foreign lock."
             }
         }
-    } catch { Write-Warn "Could not release lock: $($_.Exception.Message)" }
+    }
+    catch { Write-Warn "Could not release lock: $($_.Exception.Message)" }
 }
 
 function Stop-Deploy ([string]$ErrorMsg) {
@@ -229,7 +237,8 @@ function Get-ServerManifest {
         $json = $content | ConvertFrom-Json -AsHashtable
         if ($json.files) { return $json.files }
         return $json
-    } catch {
+    }
+    catch {
         Write-Warn "Server manifest corrupted. Full upload will be performed."
         return @{}
     }
@@ -263,11 +272,11 @@ function Get-LocalHashes ([string]$DirPath) {
 # --- app_offline.htm content -------------------------------------------------
 $APP_OFFLINE_HTML = @'
 <!DOCTYPE html>
-<html lang="th-TH">
+<html lang="en-US">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>ATS - กำลังอัปเดตระบบ</title>
+  <title>ATS - System Update</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Segoe UI',Roboto,sans-serif;background:#0b0f19;color:#fff;
@@ -281,8 +290,8 @@ $APP_OFFLINE_HTML = @'
 </head>
 <body>
   <div class="card">
-    <h1><span class="accent">ATS</span> กำลังอัปเดตระบบ</h1>
-    <p>เรากำลังอัปเกรดระบบ<br>กรุณารอสักครู่ - ประมาณ 3-5 นาที</p>
+    <h1><span class="accent">ATS</span> System Update</h1>
+    <p>We are currently upgrading the system.<br>Please wait a moment - approximately 3-5 minutes.</p>
   </div>
 </body>
 </html>
@@ -293,7 +302,7 @@ $APP_OFFLINE_HTML = @'
 # =============================================================================
 
 # Credentials validation
-if (-not $Server)   { Write-Err "FTP server not set. Use -Server or set FTP_SERVER env var."; exit 1 }
+if (-not $Server) { Write-Err "FTP server not set. Use -Server or set FTP_SERVER env var."; exit 1 }
 if (-not $Username) { Write-Err "FTP username not set. Use -Username or set FTP_USER env var."; exit 1 }
 if (-not $Password) { Write-Err "FTP password not set. Use -Password or set FTP_PASS env var."; exit 1 }
 
@@ -315,7 +324,7 @@ Initialize-FtpConnection -Server $Server -Username $Username -Password $Password
 # -----------------------------------------------------------------------------
 if (-not $SkipBuild) {
     # Clean slate
-    if (Test-Path "$repoRoot\deploy")          { Remove-Item "$repoRoot\deploy"          -Recurse -Force }
+    if (Test-Path "$repoRoot\deploy") { Remove-Item "$repoRoot\deploy"          -Recurse -Force }
     if (Test-Path "$repoRoot\backend\wwwroot") { Remove-Item "$repoRoot\backend\wwwroot" -Recurse -Force }
     New-Item "$repoRoot\deploy"          -ItemType Directory | Out-Null
     New-Item "$repoRoot\backend\wwwroot" -ItemType Directory | Out-Null
@@ -335,7 +344,8 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { Write-Err "Backend publish failed (exit $LASTEXITCODE)"; exit 1 }
     Write-Ok "Backend published."
     Set-Location $repoRoot
-} else {
+}
+else {
     Write-Warn "SkipBuild specified -- using existing artifacts in deploy\backend\."
 }
 
@@ -361,14 +371,15 @@ try {
     Write-Ok "Found $($localHashes.Count) local file(s)."
 
     # --- 2d. Diff ------------------------------------------------------------
-    $toUpload   = [System.Collections.Generic.List[string]]::new()
-    $toDelete   = [System.Collections.Generic.List[string]]::new()
-    $unchanged  = 0
+    $toUpload = [System.Collections.Generic.List[string]]::new()
+    $toDelete = [System.Collections.Generic.List[string]]::new()
+    $unchanged = 0
 
     foreach ($kv in $localHashes.GetEnumerator()) {
         if ($serverHashes.ContainsKey($kv.Key) -and $serverHashes[$kv.Key] -eq $kv.Value) {
             $unchanged++
-        } else {
+        }
+        else {
             [void]$toUpload.Add($kv.Key)
         }
     }
@@ -394,7 +405,8 @@ try {
     Write-Step "Putting site offline (app_offline.htm)..."
     if ($DryRun) {
         Write-Dry "Would upload app_offline.htm"
-    } else {
+    }
+    else {
         Invoke-FtpUploadText -RemotePath $OFFLINE_REMOTE -Content $APP_OFFLINE_HTML
         $script:SiteOffline = $true
         Write-Ok "Site offline."
@@ -410,9 +422,9 @@ try {
             Write-Warn "Protected -- skipping upload: $rel"
             continue
         }
-        $localFile   = [System.IO.Path]::Combine($BACKEND_LOCAL, $rel.Replace('/', '\'))
-        $remoteFull  = ("$RemotePath/$rel" -replace '\\', '/') -replace '//', '/'
-        $remoteTmp   = "$remoteFull.uploading"
+        $localFile = [System.IO.Path]::Combine($BACKEND_LOCAL, $rel.Replace('/', '\'))
+        $remoteFull = ("$RemotePath/$rel" -replace '\\', '/') -replace '//', '/'
+        $remoteTmp = "$remoteFull.uploading"
 
         if (-not (Test-Path -LiteralPath $localFile)) {
             Write-Warn "Local file missing -- skipping: $rel"
@@ -429,7 +441,8 @@ try {
         try {
             Invoke-FtpRename -OldPath $remoteTmp -NewName ([System.IO.Path]::GetFileName($remoteFull))
             [void]$script:TempFiles.Remove($remoteTmp)
-        } catch {
+        }
+        catch {
             Write-Warn "Rename failed for '$rel' -- falling back to direct upload: $($_.Exception.Message)"
             try { Invoke-FtpDelete $remoteTmp } catch { }
             [void]$script:TempFiles.Remove($remoteTmp)
@@ -462,7 +475,8 @@ try {
     Write-Step "Bringing site back online..."
     if ($DryRun) {
         Write-Dry "Would remove app_offline.htm"
-    } else {
+    }
+    else {
         Invoke-FtpDelete $OFFLINE_REMOTE
         $script:SiteOffline = $false
         Write-Ok "Site is LIVE."
@@ -476,6 +490,7 @@ try {
     Write-Log OK "  Uploaded: $done  |  Deleted: $($toDelete.Count)  |  Unchanged: $unchanged" Green
     Write-Log OK "================================================================" Green
 
-} catch {
+}
+catch {
     Stop-Deploy $_.Exception.Message
 }

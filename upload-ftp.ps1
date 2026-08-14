@@ -66,8 +66,9 @@ function New-FtpRequest {
     return $req
 }
 
-function Get-FtpStatusCode ([System.Net.WebException]$ex) {
-    if ($ex.Response) {
+function Get-FtpStatusCode ($err) {
+    $ex = if ($err -is [System.Management.Automation.ErrorRecord]) { $err.Exception } else { $err }
+    if ($ex -is [System.Net.WebException] -and $ex.Response) {
         $sc = [int]$ex.Response.StatusCode
         $ex.Response.Close()
         return $sc
@@ -157,21 +158,22 @@ function Invoke-FtpUploadBytes {
             $resp = $req.GetResponse(); $resp.Close()
             return
         } catch [System.Net.WebException] {
-            $sc = Get-FtpStatusCode $_
-            if ($sc -eq 550 -and $i -eq 1) {
-                # File may be locked -- try delete then retry
-                try { Invoke-FtpDelete $RemotePath } catch { }
-                continue
-            }
             if ($i -lt $MaxAttempts) {
                 $delay = $i * 3
                 Write-Warning "FTP upload attempt $i/$MaxAttempts failed: $($_.Exception.Message) -- retry in ${delay}s"
+                try { Invoke-FtpDelete $RemotePath } catch { }
                 Start-Sleep $delay
                 continue
             }
             throw
         } catch {
-            if ($i -lt $MaxAttempts) { Start-Sleep ($i * 3); continue }
+            if ($i -lt $MaxAttempts) {
+                $delay = $i * 3
+                Write-Warning "FTP upload attempt $i/$MaxAttempts failed: $($_.Exception.Message) -- retry in ${delay}s"
+                try { Invoke-FtpDelete $RemotePath } catch { }
+                Start-Sleep $delay
+                continue
+            }
             throw
         }
     }
